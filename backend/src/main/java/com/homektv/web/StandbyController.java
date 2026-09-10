@@ -63,10 +63,13 @@ public class StandbyController {
     @GetMapping("/standby/logo")
     public ResponseEntity<Resource> logo() {
         Object value = settingService.getAll().get("standby_logo_path");
-        if (value == null) return ResponseEntity.notFound().build();
-        Path file = dataRoot.resolve(value.toString()).normalize();
-        if (!file.startsWith(dataRoot.normalize()) || !Files.isReadable(file)) return ResponseEntity.notFound().build();
-        String name = file.getFileName().toString().toLowerCase();
+        if (value == null || value.toString().isBlank()) return ResponseEntity.notFound().build();
+        Path file = dataRoot.resolve(value.toString().trim()).normalize();
+        if (!file.startsWith(dataRoot.normalize()) || !Files.isRegularFile(file) || !Files.isReadable(file)) {
+            return ResponseEntity.notFound().build();
+        }
+        Path fileName = file.getFileName();
+        String name = fileName != null ? fileName.toString().toLowerCase() : "";
         MediaType type = name.endsWith(".png") ? MediaType.IMAGE_PNG : name.endsWith(".webp") ? MediaType.parseMediaType("image/webp") : MediaType.IMAGE_JPEG;
         return ResponseEntity.ok().contentType(type).body(new FileSystemResource(file));
     }

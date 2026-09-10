@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.json.JsonReadFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.homektv.config.SslContextHelper;
 import com.homektv.domain.Song;
 import com.homektv.domain.MediaImportRecord;
 import com.homektv.repo.SongFileRepository;
@@ -184,7 +185,10 @@ public class OpenAiCompatibleClient {
     }
 
     private JsonNode request(AiConfigService.ResolvedConfig config, String method, String path, Object body) {
-        HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(Math.min(30, config.timeoutSeconds()))).build();
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(Math.min(30, config.timeoutSeconds())))
+                .sslContext(SslContextHelper.trustAllSslContext())
+                .build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
         requestFactory.setReadTimeout(Duration.ofSeconds(config.timeoutSeconds()));
         RestClient client = restClientBuilder.baseUrl(config.baseUrl()).requestFactory(requestFactory).build();

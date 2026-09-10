@@ -1,6 +1,7 @@
 package com.homektv.mvdownload;
 
 import com.homektv.config.AppProperties;
+import com.homektv.config.SslContextHelper;
 import com.homektv.dualtrack.DualTrackConvertService;
 import com.homektv.domain.MediaImportRecord;
 import com.homektv.domain.MvDownloadTask;
@@ -105,6 +106,7 @@ public class MvDownloadService {
         this.ffmpegPath = ffmpegPath;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(15))
+                .sslContext(SslContextHelper.trustAllSslContext())
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
     }

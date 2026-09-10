@@ -8,6 +8,7 @@ import com.google.zxing.EncodeHintType;
 import com.google.zxing.common.BitMatrix;
 import com.google.zxing.qrcode.QRCodeWriter;
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
+import com.homektv.config.SslContextHelper;
 import com.homektv.domain.Setting;
 import com.homektv.repo.SettingRepository;
 import com.homektv.web.ApiException;
@@ -62,6 +63,7 @@ public class BilibiliAuthService {
         this.mapper = mapper;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
+                .sslContext(SslContextHelper.trustAllSslContext())
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
     }

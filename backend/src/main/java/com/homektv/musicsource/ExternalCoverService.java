@@ -1,5 +1,6 @@
 package com.homektv.musicsource;
 
+import com.homektv.config.SslContextHelper;
 import com.homektv.library.AssetWriter;
 import com.homektv.web.ApiException;
 import org.springframework.stereotype.Service;
@@ -22,7 +23,10 @@ public class ExternalCoverService {
             MusicProvider.NETEASE, Set.of("music.126.net"),
             MusicProvider.KUGOU, Set.of("kugou.com", "kugoucdn.com", "kgimg.com")
     );
-    private final HttpClient client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
+    private final HttpClient client = HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .sslContext(SslContextHelper.trustAllSslContext())
+            .build();
     private final AssetWriter writer;
     private final ProviderCallGuard guard;
     private final CoverImageNormalizer imageNormalizer;

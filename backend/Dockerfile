@@ -49,10 +49,11 @@ ENV KTV_RELEASE_VERSION=${KTV_RELEASE_VERSION} \
 # intel-media-driver is x86_64-only, so keep the multi-architecture ARM64 image unchanged.
 RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirrors.aliyun.com#g' /etc/apk/repositories \
     && for attempt in 1 2 3; do \
-      apk add --no-cache ffmpeg && break; \
+      apk add --no-cache ca-certificates ffmpeg && break; \
       if [ "$attempt" -eq 3 ]; then exit 1; fi; \
       sleep 5; \
     done \
+    && update-ca-certificates \
     && if [ "$(apk --print-arch)" = "x86_64" ]; then \
       apk add --no-cache intel-media-driver libva-utils; \
     fi

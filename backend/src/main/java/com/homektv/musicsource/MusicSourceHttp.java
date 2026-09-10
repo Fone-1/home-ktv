@@ -2,6 +2,7 @@ package com.homektv.musicsource;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.homektv.config.SslContextHelper;
 
 import java.net.URI;
 import java.net.URLEncoder;
@@ -15,7 +16,10 @@ import java.util.Map;
 import java.util.Set;
 
 final class MusicSourceHttp {
-    private final HttpClient client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
+    private final HttpClient client = HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .sslContext(SslContextHelper.trustAllSslContext())
+            .build();
     private final ObjectMapper mapper;
     private final MusicProvider provider;
     private final Set<String> allowedHosts;

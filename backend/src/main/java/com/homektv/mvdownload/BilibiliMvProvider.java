@@ -2,6 +2,7 @@ package com.homektv.mvdownload;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.homektv.config.SslContextHelper;
 import com.homektv.web.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,6 +49,7 @@ public class BilibiliMvProvider implements MvSearchProvider {
         this.wbi = wbi;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
+                .sslContext(SslContextHelper.trustAllSslContext())
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
     }

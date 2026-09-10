@@ -89,9 +89,13 @@ public class PlaylistController {
     }
 
     private ResponseEntity<Resource> serveCover(String relativePath) {
-        Path file = dataRoot.resolve(relativePath).normalize();
-        if (!file.startsWith(dataRoot.normalize()) || !Files.isReadable(file)) return ResponseEntity.notFound().build();
-        String name = file.getFileName().toString().toLowerCase();
+        if (relativePath == null || relativePath.isBlank()) return ResponseEntity.notFound().build();
+        Path file = dataRoot.resolve(relativePath.trim()).normalize();
+        if (!file.startsWith(dataRoot.normalize()) || !Files.isRegularFile(file) || !Files.isReadable(file)) {
+            return ResponseEntity.notFound().build();
+        }
+        Path fileName = file.getFileName();
+        String name = fileName != null ? fileName.toString().toLowerCase() : "";
         MediaType type = name.endsWith(".png") ? MediaType.IMAGE_PNG
                 : name.endsWith(".webp") ? MediaType.parseMediaType("image/webp") : MediaType.IMAGE_JPEG;
         return ResponseEntity.ok().contentType(type).body(new FileSystemResource(file));

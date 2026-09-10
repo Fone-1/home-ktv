@@ -3,6 +3,7 @@ package com.homektv.mvdownload;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.homektv.config.SslContextHelper;
 import com.homektv.musicsource.NeteaseCrypto;
 import com.homektv.web.ApiException;
 import org.slf4j.Logger;
@@ -38,6 +39,7 @@ public class NeteaseMvProvider implements MvSearchProvider {
         this.mapper = mapper;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
+                .sslContext(SslContextHelper.trustAllSslContext())
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
     }
