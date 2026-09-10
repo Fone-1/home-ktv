@@ -1,6 +1,13 @@
-# Home KTV
+# Home KTV (家庭局域网智能点歌与曲库系统 - 增强版)
 
-**中文** | [English](README_EN.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![Vue 3](https://img.shields.io/badge/Vue-3.x-emerald.svg)](https://vuejs.org/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg)](https://www.docker.com/)
+
+> **项目致谢与二次开发说明：**  
+> 本项目基于优秀的开源项目 [zhayinggang/ktv-home](https://github.com/zhayinggang/ktv-home) 进行了深度二次开发与功能扩展。诚挚感谢原作者的开源贡献！  
+> 本版本在完整保留原项目出色的局域网多端协同、电视大屏逐字歌词渲染、局域网设备自发现等能力的基础上，重点围绕 **在线 MV 聚合搜索与极速下载中心**、**单轨 MV 转双轨伴奏系统 (Vocal Separation)**、**手机端点歌全链路交互体验升级**、**系统配置持久化** 与 **飞牛 fnOS (NAS) 容器化专属编排** 进行了全方位的架构重构与特性增强。
 
 ## 界面预览
 
@@ -27,17 +34,37 @@ Home KTV 是一套运行在家庭 NAS 或 Linux 主机上的局域网点歌系�
 4. 点歌队列、播放进度、歌词、音量与原唱/伴唱状态在电视和手机间实时同步。
 5. 演唱结束后可在手机查看最近演唱，管理员则可在后台维护歌曲、歌手、歌单和转码任务。
 
-## 本版本更新
+---
 
-- **源文件流水线**：扫描时重新判断文件是否需要转码；兼容文件直接移动到 KTV 曲库并清理原始管理记录，不兼容文件保留在原始音乐管理中等待转码。批量转码支持进度和插队，自动清理完成后会提醒重新扫描源路径。
-- **KTV 曲库管理**：歌曲列表使用分页查询和固定操作区；元数据刮削支持全量批次、暂停、继续、进度明细、置信度自动写入、人工审核、手工编辑、单曲重新匹配和封面回显。
-- **歌手库**：按规范化名称汇总歌手，支持性别状态、批量 AI 分析和人工复核；同名歌手审核时会展示代表歌曲作为判断依据。
-- **手机点歌页**：歌曲列表统一显示封面，语种和分类提升为主要入口，歌手支持男歌手、女歌手筛选，并可把歌曲加入已有歌单。
-- **主题歌单**：使用已整理的曲库元数据生成可编辑预览，单个歌单最多 100 首；不足 100 首也可保存，AI 生成的歌单支持删除。
-- **设置中心**：改为分类侧栏、搜索和右侧内容区，支持基础配置、AI 模型、入库与转码、TV 显示、音乐元数据和数据维护分类及深链接。
-- **AI 配置与降级**：支持任意 OpenAI-compatible 地址和模型 ID、模型列表探测、单/双模型、能力测试和并发限制。未配置密钥或调用失败时，具备本地规则的解析任务自动降级；没有等价本地能力的 AI 操作会提示管理员先配置模型。
-- **发布与升级**：发布流水线只构建签名 Release APK，将 32 位和 64 位安装包内置到 Docker 镜像；管理后台按版本显示公告，TV 连接后可下载适合设备架构的安装包并打开系统安装界面。
-- **升级安全**：Flyway V15 保留历史源记录，不执行清表或批量删除；迁移安全测试会阻止直接提交 `DELETE FROM`、`TRUNCATE TABLE` 和 `DROP TABLE/COLUMN`。
+## ✨ 二开核心新增功能
+
+### 1. 🎬 在线 MV 搜索与极速下载中心
+- **多平台聚合搜索**：支持网易云音乐、Bilibili 等主流平台 MV 聚合检索，支持直链音画流解析与封面匹配。
+- **B 站官方扫码授权**：管理后台集成 B 站官方安全二维码登录，自动同步账号 Cookie 凭证，解锁 1080P/4K 高清画质与 Hi-Res 无损音频流。
+- **高韧性下载引擎**：支持多任务异步并发、动态断点续传、B 站 412 频控智能避让自愈与 6 阶降级解析。
+- **全流程入库闭环**：下载完成后自动触发元数据刮削、自动转码入库，支持“下载后自动加入播放队列”及“自动提取转双轨伴奏”。
+
+### 2. 🎙️ 单轨 MV 转双轨伴奏系统 (Vocal Separation)
+- **双音轨无损重构**：针对网络下载或本地已有的单音轨普通 MV，提供极速 DSP 频带声学消音与 SOTA 深度学习 AI 人声分离双引擎，一键无损生成包含“原唱轨 + 伴奏轨”的标准双音轨 KTV 视频。
+- **后台批量处理与进度**：支持单曲即时转换与全量后台批量处理，实时回显进度百分比、耗时与音轨置信度，彻底解决普通 MV 无法消音跟唱的痛点。
+
+### 3. 📱 手机点歌端全链路体验升级
+- **8 宫格对称金刚区**：主页采用 8 宫格现代对称排布（热歌榜、语种、歌手、歌单、主题、最近唱过、我的收藏、遥控器）。
+- **时段温情问候专区**：根据早间、午后、傍晚和深夜智能切换问候文案，配备专属快捷选歌专区。
+- **声波律动 NowPlayingBar**：手机底部常驻播放条新增动态声波波形跳动，实时同步电视端原伴唱切换、切歌与播放进度。
+- **一键优先插播与重复点歌拦截引导**：支持一键“优先插播”（置顶到下一首播放）；重复点歌时弹出贴心防误触提醒，并引导查看队列或优先插播。
+- **本地搜索历史与热门推荐**：搜索栏支持本地搜索记录保存、一键清空及热门榜单推荐标签。
+
+### 4. ⚙️ 系统基础配置与偏好持久化
+- 将“MV 下载后自动入队”与“单音轨自动触发转双轨伴奏”配置由前端局部状态移入服务端基础配置表持久化存储，实现多端同步与全局继承。
+
+### 5. 🐳 飞牛 fnOS (NAS) / Linux 容器化编排
+- 专门提供 `docker-compose.fnos.yml` 生产级配置文件，完美支持复用宿主机已有 PostgreSQL（如端口 5433）或启动独立容器，支持 Intel 核显 `/dev/dri` 透传开启 VAAPI 硬件级极速转码。
+
+### 6. 📚 工业级项目需求与架构文档
+- 在 [doc/README.md](doc/README.md) 中完整归档了包括在线 MV 下载、单转双轨伴奏、移动端交互优化、服务器部署等 5 大核心维度的全套 PRD、系统架构图、接口契约、实施计划与质量验收报告。
+
+---
 
 ## 主要功能
 
@@ -98,48 +125,91 @@ Home KTV 服务端 ───── PostgreSQL
 
 ### 环境要求
 
-- 支持 Docker Compose 的 NAS、Linux 主机或 Docker Desktop
-- 建议至少 1 GB 可用内存
-- 手机、Android TV 和服务端位于同一局域网
-- Android TV 8.0（API 26）或更高版本
 
-### 1. 配置目录和密码
+- 运行环境：支持 Docker Compose 的 Linux 主机、飞牛 fnOS、群晖/威联通 NAS 或本地 PC。
+- 硬件配置：建议最低 2 核 CPU、1GB 可用内存；若启用硬件转码，推荐 Intel 带核显处理器。
+- 网络环境：服务端、Android TV、点歌手机必须位于同一局域网内。
+- 电视端要求：Android TV 8.0（API 26）及以上版本。
 
-```bash
-git clone <仓库地址>
-cd home-ktv
-cp .env.example .env
-```
+---
 
-编辑 `.env`，至少确认以下配置：
+### 方案一：飞牛 fnOS (NAS) Docker 部署（推荐）
 
-```dotenv
-KTV_SOURCE_MUSIC_DIR=/volume1/home-ktv/source-music
-KTV_MUSIC_DIR=/volume1/home-ktv/music
-KTV_DB_PASSWORD=请替换为强密码
-```
+本项目已内置针对飞牛 fnOS 及同类 NAS 环境优化定制的编排文件 `docker-compose.fnos.yml`：
 
-- `KTV_SOURCE_MUSIC_DIR`：放置未经处理的原始视频和音频。
-- `KTV_MUSIC_DIR`：存放已直拷或转码完成、可以点播的文件。
+1. **克隆项目到 NAS 目标目录**：
+   ```bash
+   git clone https://github.com/<你的用户名>/ktv-home.git
+   cd ktv-home
+   ```
 
-两个目录不要配置成同一路径。服务端会向曲库目录写入处理结果，请确保容器具有写权限。
+2. **检查并配置环境变量**：
+   `docker-compose.fnos.yml` 默认预设对接本地 PostgreSQL 实例（端口 5433），并透传核显 `/dev/dri`。如需自定义，可通过环境变量或直接修改 compose 文件中的连接信息：
+   ```yaml
+   environment:
+     SPRING_DATASOURCE_URL: jdbc:postgresql://10.17.220.79:5433/ktv
+     SPRING_DATASOURCE_USERNAME: ktv
+     SPRING_DATASOURCE_PASSWORD: your-password
+   ```
 
-### 2. 启动服务
+3. **启动容器**：
+   ```bash
+   docker compose -f docker-compose.fnos.yml up -d --build
+   ```
 
-推荐直接拉取 GitHub Actions 发布的多架构镜像，无需在 NAS 或主机上编译：
+4. **验证服务运行状态**：
+   ```bash
+   curl http://127.0.0.1:8080/api/health
+   ```
+   返回 `{"status":"UP"}` 即表示启动成功。
 
-```bash
-docker compose -f docker-compose.prebuilt.yml up -d --pull always --wait
-```
+---
 
-默认使用 `ghcr.io/zhayinggang/ktv-home:latest`。生产环境可在 `.env` 中将
-`KTV_RELEASE_IMAGE` 设置为具体的发布标签，以避免 `latest` 自动变化。
+### 方案二：通用 Docker Compose 部署
 
-需要从源码构建时使用：
+1. **复制环境配置并初始化**：
+   ```bash
+   cp .env.example .env
+   ```
+   编辑 `.env`，设置媒体素材路径与数据库密码：
+   ```dotenv
+   KTV_SOURCE_MUSIC_DIR=/volume1/home-ktv/source-music
+   KTV_MUSIC_DIR=/volume1/home-ktv/music
+   KTV_DB_PASSWORD=your_secure_password
+   ```
 
-```bash
-docker compose up -d --build --wait
-```
+2. **启动完整堆栈（包含内置 PostgreSQL）**：
+   ```bash
+   docker compose up -d --build --wait
+   ```
+
+---
+
+### 方案三：本地开发环境启动
+
+若需要进行二次开发或本地调试：
+
+1. **启动依赖数据库**：
+   ```bash
+   docker compose -f docker-compose.dev.yml up -d
+   ```
+
+2. **后端启动 (Spring Boot 3.5, 需 JDK 21+)**：
+   ```bash
+   cd backend
+   ./mvnw spring-boot:run
+   # 或在 Windows 下直接双击运行 start-dev.bat
+   ```
+
+3. **前端点歌端启动 (Vue 3, 需 Node.js 20+)**：
+   ```bash
+   cd h5
+   npm install
+   npm run dev
+   # 或在 Windows 下直接双击运行 start-h5.bat
+   ```
+
+---
 
 确认容器健康：
 
@@ -163,6 +233,18 @@ NAS 防火墙需要允许这两个端口；使用自定义端口时以 `.env` �
 4. 兼容文件会自动直拷到曲库；不兼容文件进入待转码列表。
 5. 在“原始音乐管理”中执行单首、选中或批量转码。
 6. 在“KTV 曲库”中检查歌名、歌手、媒体类型和原唱/伴奏音轨。
+
+### 在线搜歌与下载（二开新增）
+
+1. 打开管理后台，点击 **在线 MV 下载**。
+2. 点击 **B站账号登录** 扫码授权，解锁 1080P/4K 高清与无损音轨。
+3. 在搜索栏输入歌手或歌名，一键下载；下载完成后系统会自动刮削元数据并入库，亦可勾选自动转双轨伴奏。
+
+### 单轨转双轨伴奏（二开新增）
+
+1. 在后台“KTV 曲库”或“在线 MV 下载”中，找到单音轨普通 MV 视频。
+2. 点击 **转双轨伴奏**，系统调用 DSP 频带消音与 AI 分离模型无损重构生成原伴唱双轨视频。
+3. 转换完成后可在手机点歌端或电视大屏上自由切换原唱与伴奏。
 
 扫描只负责分析、去重和直拷，不会自动启动耗时转码。批量转码进度可在管理后台查看，任务运行时支持把指定歌曲插到下一首处理。
 
@@ -453,13 +535,29 @@ cd android-tv && ./gradlew testDebugUnitTest
 目录结构：
 
 ```text
-backend/      Spring Boot 服务端、数据库、扫描、转码和实时控制
-h5/           Vue 3 手机点歌端与管理后台
-android-tv/   Kotlin Android TV 客户端
-scripts/      备份、恢复和媒体辅助脚本
+backend/               # Spring Boot 3.5 服务端核心 (MV下载、双轨伴奏、曲库管理、WebSocket)
+h5/                    # Vue 3 前端工程 (移动点歌端 + 响应式管理后台)
+android-tv/            # Kotlin Android TV 播放端 (Media3/ExoPlayer 双轨秒切与歌词扫色)
+doc/                   # 完整的需求与工程技术设计文档库
+  ├── mv-search-and-download/          # 在线 MV 搜索与下载中心文档 (PRD/架构/契约/QA)
+  ├── single-to-dual-track-conversion/ # 单轨转双轨伴奏系统文档
+  ├── mobile-song-ordering-optimization/ # 移动端点歌体验优化文档
+  ├── server-deployment/               # 服务器部署与运维文档
+  ├── mv-download-settings-migration/  # 配置持久化迁移文档
+  └── README.md                        # 文档索引与分类导航
+scripts/               # 运维、备份与音视频处理辅助脚本
+docker-compose.fnos.yml# 飞牛 fnOS (NAS) 生产环境专属 Compose
+docker-compose.yml     # 通用标准容器编排
 ```
 
 ## 常见问题
+
+### Git 报错 detected dubious ownership in repository
+
+Windows 环境下由于账户所有权机制，在执行 Git 命令前可先执行：
+```bash
+git config --global --add safe.directory D:/ktv-home
+```
 
 ### 手机扫码后打不开
 
@@ -501,8 +599,6 @@ scripts/      备份、恢复和媒体辅助脚本
 
 ## 许可与媒体责任
 
-项目代码采用 [MIT License](LICENSE)，允许自由使用、修改、分发和商业使用，但需保留许可证及版权声明。
-
-请只导入和播放自己有权使用的媒体。Home KTV 不提供、下载或分发歌曲、MV 或伴奏资源。
-
-问题反馈请附上 NAS 系统、Android TV 型号、Android 版本、媒体格式和相关日志，并删除 IP、密码、密钥等隐私信息。
+1. 本项目代码采用 [MIT License](LICENSE) 开源协议，保留原作者及贡献者版权声明。
+2. 请仅将系统用于个人家庭局域网娱乐及有合法权限的媒体播放。本系统在线搜索与转码功能仅供技术学习与个人研究使用，请勿用于商业侵权分发。
+3. 鸣谢原项目：[zhayinggang/ktv-home](https://github.com/zhayinggang/ktv-home)。

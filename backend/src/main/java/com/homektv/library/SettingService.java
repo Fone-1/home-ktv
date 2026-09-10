@@ -18,8 +18,26 @@ import java.util.HashSet;
 @Service
 public class SettingService {
 
-    public static final String LIBRARY_WATCH_ENABLED = "library_watch_enabled";
-    public static final String DELETE_SOURCE_AFTER_TRANSCODE = "delete_source_after_transcode";
+   public static final String LIBRARY_WATCH_ENABLED = "library_watch_enabled";
+   public static final String DELETE_SOURCE_AFTER_TRANSCODE = "delete_source_after_transcode";
+    public static final String MV_AUTO_ENQUEUE = "mv_auto_enqueue";
+    public static final String MV_AUTO_CONVERT_DUAL_TRACK = "mv_auto_convert_dual_track";
+
+   public static final String DUAL_TRACK_ENGINE = "dual_track_engine";
+    public static final String DUAL_TRACK_REMOTE_URL = "dual_track_remote_url";
+    public static final String DUAL_TRACK_REMOTE_TOKEN = "dual_track_remote_token";
+    public static final String DUAL_TRACK_CONCURRENCY = "dual_track_concurrency";
+    public static final String DUAL_TRACK_BACKUP_ORIGINAL = "dual_track_backup_original";
+    public static final String DUAL_TRACK_AUDIO_BITRATE = "dual_track_audio_bitrate";
+
+    public static final Map<String, Object> DUAL_TRACK_DEFAULTS = Map.of(
+            DUAL_TRACK_ENGINE, "DSP",
+            DUAL_TRACK_REMOTE_URL, "",
+            DUAL_TRACK_REMOTE_TOKEN, "",
+            DUAL_TRACK_CONCURRENCY, 1,
+            DUAL_TRACK_BACKUP_ORIGINAL, false,
+            DUAL_TRACK_AUDIO_BITRATE, "192k"
+    );
 
     public static final Map<String, Object> TRANSCODE_DEFAULTS = Map.of(
             "direct_copy_containers", List.of("mp4", "m4v", "mkv"),
@@ -38,11 +56,17 @@ public class SettingService {
             Map.entry("mini_qr", true), Map.entry("standby_welcome", "今晚开唱"),
             Map.entry("standby_subtitle", "手机点歌，电视欢唱\n一家人的客厅 KTV"), Map.entry("standby_source", "mixed"),
             Map.entry("standby_song_ids", List.of()), Map.entry("standby_interval_sec", 8),
-            Map.entry("display_address", ""), Map.entry("standby_logo_path", ""),
-            Map.entry(DELETE_SOURCE_AFTER_TRANSCODE, false), Map.entry("room_host_user_id", 0L));
-    private static final Set<String> TRANSCODE_KEYS = TRANSCODE_DEFAULTS.keySet();
+           Map.entry("display_address", ""), Map.entry("standby_logo_path", ""),
+            Map.entry(DELETE_SOURCE_AFTER_TRANSCODE, false), Map.entry("room_host_user_id", 0L),
+            Map.entry(MV_AUTO_ENQUEUE, true),
+            Map.entry(MV_AUTO_CONVERT_DUAL_TRACK, false));
+   private static final Set<String> TRANSCODE_KEYS = TRANSCODE_DEFAULTS.keySet();
     private static final Set<String> ALLOWED_KEYS = new HashSet<>();
-    static { ALLOWED_KEYS.addAll(TRANSCODE_DEFAULTS.keySet()); ALLOWED_KEYS.addAll(GENERAL_DEFAULTS.keySet()); }
+    static {
+        ALLOWED_KEYS.addAll(TRANSCODE_DEFAULTS.keySet());
+        ALLOWED_KEYS.addAll(GENERAL_DEFAULTS.keySet());
+        ALLOWED_KEYS.addAll(DUAL_TRACK_DEFAULTS.keySet());
+    }
 
     private final SettingRepository repo;
     private final ObjectMapper mapper;
@@ -57,22 +81,36 @@ public class SettingService {
     public Map<String, Object> getAll() {
         Map<String, Object> out = new HashMap<>(TRANSCODE_DEFAULTS);
         out.putAll(GENERAL_DEFAULTS);
+        out.putAll(DUAL_TRACK_DEFAULTS);
         for (Setting s : repo.findAll()) {
-            if (!s.getKey().startsWith("ai.") && !s.getKey().startsWith("music_sources.")) {
+            if (ALLOWED_KEYS.contains(s.getKey())) {
                 out.put(s.getKey(), parse(s.getValue()));
             }
         }
         return out;
     }
 
-    public boolean isLibraryWatchEnabled() {
-        return Boolean.TRUE.equals(getAll().get(LIBRARY_WATCH_ENABLED));
+   public boolean isLibraryWatchEnabled() {
+       return Boolean.TRUE.equals(getAll().get(LIBRARY_WATCH_ENABLED));
+   }
+
+    /** MV 在线下载入库后是否自动加入点歌队列 */
+    public boolean isMvAutoEnqueue() {
+        return Boolean.TRUE.equals(getAll().getOrDefault(MV_AUTO_ENQUEUE, true));
     }
 
-    /** 批量写入设置 */
+    /** MV 在线下载单音轨视频是否自动触发转双轨伴奏分离 */
+    public boolean isMvAutoConvertDualTrack() {
+        return Boolean.TRUE.equals(getAll().getOrDefault(MV_AUTO_CONVERT_DUAL_TRACK, false));
+    }
+
+   /** 批量写入设置 */
     @Transactional
     public void putAll(Map<String, Object> settings) {
         settings.forEach((k, v) -> {
+            if (!ALLOWED_KEYS.contains(k)) {
+                return;
+            }
             validateKeyValue(k, v);
             Setting s = repo.findById(k).orElseGet(() -> {
                 Setting ns = new Setting();
@@ -88,9 +126,23 @@ public class SettingService {
         if (!ALLOWED_KEYS.contains(key)) throw new com.homektv.web.ApiException("SETTING_NOT_ALLOWED", "不允许修改设置：" + key);
         if (value instanceof String text && text.length() > 1000)
             throw new com.homektv.web.ApiException("SETTING_INVALID_RANGE", key + " 文本过长");
-        if (Set.of(LIBRARY_WATCH_ENABLED, "standby_carousel", "anti_burn", "mini_qr", "transcode_audio_only",
-                "transcode_hardware_acceleration", "transcode_hardware_auto_configured", DELETE_SOURCE_AFTER_TRANSCODE).contains(key)) {
+       if (Set.of(LIBRARY_WATCH_ENABLED, "standby_carousel", "anti_burn", "mini_qr", "transcode_audio_only",
+                "transcode_hardware_acceleration", "transcode_hardware_auto_configured", DELETE_SOURCE_AFTER_TRANSCODE,
+                MV_AUTO_ENQUEUE, MV_AUTO_CONVERT_DUAL_TRACK).contains(key)) {
+           if (!(value instanceof Boolean)) throw new com.homektv.web.ApiException("SETTING_INVALID_TYPE", key + " 必须是布尔值");
+       }
+        if (DUAL_TRACK_BACKUP_ORIGINAL.equals(key)) {
             if (!(value instanceof Boolean)) throw new com.homektv.web.ApiException("SETTING_INVALID_TYPE", key + " 必须是布尔值");
+        }
+        if (DUAL_TRACK_CONCURRENCY.equals(key)) {
+            if (!(value instanceof Number number) || number.intValue() < 1 || number.intValue() > 3)
+                throw new com.homektv.web.ApiException("SETTING_INVALID_RANGE", key + " 并发数必须在 1 到 3 之间");
+        }
+        if (DUAL_TRACK_ENGINE.equals(key) && !Set.of("DSP", "LOCAL_AI", "REMOTE_AI").contains(String.valueOf(value).toUpperCase())) {
+            throw new com.homektv.web.ApiException("SETTING_INVALID_VALUE", "伴奏分离引擎无效，支持 DSP / LOCAL_AI / REMOTE_AI");
+        }
+        if (DUAL_TRACK_AUDIO_BITRATE.equals(key) && !Set.of("128k", "192k", "256k", "320k").contains(String.valueOf(value).toLowerCase())) {
+            throw new com.homektv.web.ApiException("SETTING_INVALID_VALUE", "伴奏音频码率无效，支持 128k / 192k / 256k / 320k");
         }
         if (key.endsWith("_interval_sec")) {
             if (!(value instanceof Number number) || number.intValue() < 3 || number.intValue() > 60)
@@ -126,6 +178,22 @@ public class SettingService {
                 Boolean.TRUE.equals(settings.get("transcode_hardware_acceleration"))
         );
     }
+
+    public DualTrackPolicy dualTrackPolicy() {
+        Map<String, Object> settings = getAll();
+        String rawEngine = String.valueOf(settings.getOrDefault(DUAL_TRACK_ENGINE, "DSP")).toUpperCase();
+        String engine = Set.of("DSP", "LOCAL_AI", "REMOTE_AI").contains(rawEngine) ? rawEngine : "DSP";
+        String remoteUrl = String.valueOf(settings.getOrDefault(DUAL_TRACK_REMOTE_URL, "")).trim();
+        String remoteToken = String.valueOf(settings.getOrDefault(DUAL_TRACK_REMOTE_TOKEN, "")).trim();
+        int concurrency = settings.get(DUAL_TRACK_CONCURRENCY) instanceof Number n
+                ? Math.max(1, Math.min(3, n.intValue())) : 1;
+        boolean backupOriginal = Boolean.TRUE.equals(settings.get(DUAL_TRACK_BACKUP_ORIGINAL));
+        String bitrate = option(settings, DUAL_TRACK_AUDIO_BITRATE, Set.of("128k", "192k", "256k", "320k"), "192k");
+        return new DualTrackPolicy(engine, remoteUrl, remoteToken, concurrency, backupOriginal, bitrate);
+    }
+
+    public record DualTrackPolicy(String engine, String remoteUrl, String remoteToken, int concurrency,
+                                  boolean backupOriginal, String audioBitrate) {}
 
     public record TranscodePolicy(List<String> directCopyContainers, List<String> directCopyVideoCodecs,
                                   List<String> directCopyAudioCodecs, boolean transcodeAudioOnly,

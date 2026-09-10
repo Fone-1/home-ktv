@@ -74,7 +74,7 @@ public class AiConfigService {
         validate(update);
         put("enabled", update.enabled());
         put("base_url", normalizeBaseUrl(update.baseUrl()));
-        put("bulk_model", update.bulkModel().trim());
+        put("bulk_model", blank(update.bulkModel()));
         put("reasoning_model", blank(update.reasoningModel()));
         put("timeout_seconds", update.timeoutSeconds());
         put("identity_threshold", update.identityThreshold());
@@ -117,11 +117,15 @@ public class AiConfigService {
 
     private void validate(ConfigUpdate value) {
         String baseUrl = value.baseUrl() == null ? "" : value.baseUrl().trim();
-        if (Boolean.TRUE.equals(value.enabled()) && baseUrl.isBlank())
+        boolean enabled = Boolean.TRUE.equals(value.enabled());
+        if (enabled && baseUrl.isBlank())
             throw new ApiException("INVALID_AI_CONFIG", "启用 AI 时必须填写 API Base URL");
         if (!baseUrl.isBlank()) normalizeBaseUrl(baseUrl);
-        if (value.bulkModel() == null || value.bulkModel().isBlank() || value.bulkModel().length() > 200)
+        String bulkModel = blank(value.bulkModel());
+        if (enabled && bulkModel.isBlank())
             throw new ApiException("INVALID_AI_CONFIG", "批量模型 ID 不能为空且不能超过 200 个字符");
+        if (bulkModel.length() > 200)
+            throw new ApiException("INVALID_AI_CONFIG", "批量模型 ID 不能超过 200 个字符");
         if (value.reasoningModel() != null && value.reasoningModel().length() > 200)
             throw new ApiException("INVALID_AI_CONFIG", "增强模型 ID 不能超过 200 个字符");
         if (value.timeoutSeconds() < 5 || value.timeoutSeconds() > 600)

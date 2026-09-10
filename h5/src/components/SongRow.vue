@@ -2,28 +2,107 @@
   <div class="songrow">
     <!-- 排名区域 / Rank area -->
     <span v-if="rank" class="rank" :class="{ top: rank <= 3 }">{{ rank }}</span>
-    <div class="cover" :class="{ empty: !song.coverUrl }">
+    <div class="cover" :class="{ empty: !song.coverUrl }" @click="openActionSheet">
       <img v-if="song.coverUrl" :src="song.coverUrl" :alt="`${song.title || '歌曲'}封面`" loading="lazy" referrerpolicy="no-referrer" />
       <Music2 v-else :size="18" />
     </div>
-    <!-- 歌曲信息 / Song info -->
-    <div class="grow info">
+    <!-- 歌曲信息，点击唤出操作面板 / Song info, click to open action sheet -->
+    <div class="grow info" @click="openActionSheet">
       <div class="t">
         <span v-html="highlightedTitle"></span>
         <span class="tag" :class="tagClass">{{ tagText }}</span>
       </div>
       <div class="s">{{ song.artist }}<span v-if="extra"> · {{ extra }}</span></div>
     </div>
+
+    <!-- 快速加入歌单按钮 / Quick add to playlist -->
     <button class="playlist-btn" aria-label="加入歌单" title="加入歌单" @click="openPlaylistPicker"><ListPlus :size="18" /></button>
+
     <!-- 收藏按钮 / Favorite button -->
     <button class="favorite-btn" :class="{ on: favorites.has(song.id) }" :disabled="favoriteBusy"
             :aria-label="favorites.has(song.id) ? '取消收藏' : '收藏'" @click="toggleFavorite">
       <Heart :size="19" :fill="favorites.has(song.id) ? 'currentColor' : 'none'" />
     </button>
-    <!-- 点歌按钮 / Order song button -->
-    <button v-if="ordered" class="order-btn done" disabled aria-label="已点"><Check :size="18" /></button>
-    <button v-else class="order-btn" aria-label="点歌" @click="$emit('order', song)"><Plus :size="22" /></button>
+
+    <!-- 点歌/排队状态核心按钮 / Primary Order & Queue State Button -->
+    <!-- ① 正在演唱中 / Currently singing on TV screen -->
+    <div v-if="isCurrentlyPlaying" class="playing-chip" @click="toast('当前电视大屏正在演唱这首歌')">
+      <div class="soundwave" aria-hidden="true"><span></span><span></span><span></span></div>
+      <em>在唱</em>
+    </div>
+    <!-- ② 已在待播队列中 / Already in waiting queue -->
+    <button v-else-if="queuePosition > 0" class="order-btn queued" title="点击调整播放顺序" @click="openQueueMenu">
+      <span class="q-pos">第{{ queuePosition }}首</span>
+    </button>
+    <!-- ③ 外部已点标记兜底 / External ordered flag fallback -->
+    <button v-else-if="ordered" class="order-btn done" disabled aria-label="已点"><Check :size="18" /></button>
+    <!-- ④ 未点播：点击极速点歌 / Unordered: Tap to instant order -->
+    <button v-else class="order-btn" aria-label="点歌" title="点歌（长按或点击歌曲可插播）" @click="doOrder(false)">
+      <Plus :size="22" />
+    </button>
   </div>
+
+  <!-- 歌曲快捷详情与点歌操作面板 / Song Action Bottom Sheet -->
+  <Teleport to="body">
+    <div v-if="actionSheetOpen" class="action-mask" @click.self="actionSheetOpen = false">
+      <section class="action-sheet" role="dialog" aria-modal="true" aria-label="歌曲点播操作">
+        <header class="sheet-head">
+          <div class="sheet-cover">
+            <img v-if="song.coverUrl" :src="song.coverUrl" />
+            <Music2 v-else :size="24" />
+          </div>
+          <div class="sheet-info">
+            <strong>{{ song.title }}</strong>
+            <p>{{ song.artist || '未知歌手' }} <span class="tag" :class="tagClass">{{ tagText }}</span></p>
+          </div>
+          <button class="sheet-close" aria-label="关闭" @click="actionSheetOpen = false">×</button>
+        </header>
+        <div class="sheet-actions">
+          <button class="sheet-btn primary" @click="handleActionSheetOrder(false)">
+            <Plus :size="18" /><span>点歌（排入队尾）</span>
+          </button>
+          <button class="sheet-btn gold" @click="handleActionSheetOrder(true)">
+            <Zap :size="18" /><span>优先插播（设为下一首唱）</span>
+          </button>
+          <button class="sheet-btn" @click="handleActionSheetFavorite">
+            <Heart :size="18" :fill="favorites.has(song.id) ? 'currentColor' : 'none'" />
+            <span>{{ favorites.has(song.id) ? '取消收藏' : '加入收藏' }}</span>
+          </button>
+          <button class="sheet-btn" @click="handleActionSheetPlaylist">
+            <ListPlus :size="18" /><span>加入歌单</span>
+          </button>
+        </div>
+      </section>
+    </div>
+  </Teleport>
+
+  <!-- 队列状态调整弹窗（已在队列时点击触发）/ Queue State Adjustment Dialog -->
+  <Teleport to="body">
+    <div v-if="queueMenuOpen" class="action-mask" @click.self="queueMenuOpen = false">
+      <section class="action-sheet" role="dialog" aria-modal="true" aria-label="已点歌曲管理">
+        <header class="sheet-head">
+          <div class="sheet-info">
+            <strong>《{{ song.title }}》已在待播列表中</strong>
+            <p>当前排在第 {{ queuePosition }} 位<span v-if="queueItem?.orderedByNick">（由 {{ queueItem.orderedByNick }} 点播）</span></p>
+          </div>
+          <button class="sheet-close" aria-label="关闭" @click="queueMenuOpen = false">×</button>
+        </header>
+        <div class="sheet-actions">
+          <button class="sheet-btn gold" @click="doTop">
+            <Zap :size="18" /><span>设为下一首播放（插播顶歌）</span>
+          </button>
+          <button class="sheet-btn" @click="doReorder">
+            <Plus :size="18" /><span>再点一次（加到队尾重唱）</span>
+          </button>
+          <button class="sheet-btn" @click="queueMenuOpen = false">
+            <span>保持当前顺序</span>
+          </button>
+        </div>
+      </section>
+    </div>
+  </Teleport>
+
+  <!-- 歌单选择弹窗 / Playlist Picker Modal -->
   <Teleport to="body">
     <div v-if="playlistOpen" class="playlist-mask" @click.self="closePlaylistPicker">
       <section class="playlist-dialog" role="dialog" aria-modal="true" aria-label="加入歌单">
@@ -41,18 +120,19 @@
 <script setup>
 /**
  * SongRow 组件 —— 歌单列表行。
- * 支持排名展示、关键词高亮、媒体类型标签、收藏切换和点歌操作。
+ * 支持排名展示、关键词高亮、媒体类型标签、大屏播放与排队状态感知、极速点歌与优先插播、收藏切换与加入歌单。
  *
  * SongRow component — a single row in a song list.
- * Supports rank display, keyword highlighting, media type tags,
- * favorite toggling, and song ordering.
+ * Supports rank display, keyword highlighting, media type tags, now-playing & queue
+ * awareness, one-tap ordering & priority boosting, favorite toggling, and playlist management.
  */
 import { computed, ref } from 'vue'
-import api from '../api/client'
+import api, { makeControls } from '../api/client'
 import { useFavoritesStore } from '../stores/favorites'
 import { useUserStore } from '../stores/user'
+import { usePlayerStore } from '../stores/player'
 import { useToast } from '../composables/useToast'
-import { Check, Heart, ListPlus, Music2, Plus } from 'lucide-vue-next'
+import { Check, Heart, ListPlus, Music2, Plus, Zap } from 'lucide-vue-next'
 
 const props = defineProps({
   /** 歌曲对象，必传 / Song object, required */
@@ -68,15 +148,122 @@ const props = defineProps({
 })
 
 /** 触发点歌事件 / Emits order song event */
-defineEmits(['order'])
+const emit = defineEmits(['order'])
+
 const favorites = useFavoritesStore()
 const user = useUserStore()
+const player = usePlayerStore()
 const { toast } = useToast()
+const controls = makeControls(user.clientToken)
+
 const favoriteBusy = ref(false)
 const playlistOpen = ref(false)
 const playlistLoading = ref(false)
 const playlists = ref([])
 const addingPlaylistId = ref(null)
+
+const actionSheetOpen = ref(false)
+const queueMenuOpen = ref(false)
+
+/** 当前大屏是否正在演唱本曲目 / Whether this song is currently playing on the TV */
+const isCurrentlyPlaying = computed(() => player.nowPlaying?.song?.id === props.song.id)
+
+/** 当前曲目在排队队列中的索引 / Index in the waiting queue */
+const queueIndex = computed(() => (player.queue || []).findIndex(item => item.song?.id === props.song.id))
+
+/** 当前曲目在队列中的排位序号（1-based）/ 1-based position in waiting queue */
+const queuePosition = computed(() => queueIndex.value >= 0 ? queueIndex.value + 1 : 0)
+
+/** 对应的队列项对象 / Corresponding queue item */
+const queueItem = computed(() => queueIndex.value >= 0 ? player.queue[queueIndex.value] : null)
+
+/**
+ * 执行点歌操作（支持普通点歌与优先插播）。
+ * @param {boolean} priority - 是否优先插播为下一首
+ * @param {boolean} force - 是否强制重复点歌
+ *
+ * Execute order song action (supports normal ordering and priority boosting).
+ */
+async function doOrder(priority = false, force = false) {
+  try {
+    if (priority) {
+      await controls.orderAndTop(props.song.id, force)
+      toast(`已将《${props.song.title}》设为下一首播放！`)
+    } else {
+      await controls.order(props.song.id, force)
+      // 加入成功后，Toast 提供一键设为下一首的快捷入口
+      toast(`已加入队列 · 待唱第 ${player.queueCount || 1} 首`, {
+        actionText: '设为下一首',
+        onAction: async () => {
+          const item = (player.queue || []).find(q => q.song?.id === props.song.id)
+          if (item?.queueId) {
+            try {
+              await controls.top(item.queueId)
+              toast(`已将《${props.song.title}》插播至下一首！`)
+            } catch (err) {
+              toast(err.message || '置顶失败')
+            }
+          }
+        }
+      })
+    }
+    emit('order', props.song)
+  } catch (e) {
+    if (e.code === 'SONG_IN_QUEUE') {
+      openQueueMenu()
+    } else {
+      toast(e.message || '点歌失败')
+    }
+  }
+}
+
+/** 打开歌曲操作底栏 / Open song action sheet */
+function openActionSheet() {
+  actionSheetOpen.value = true
+}
+
+/** 底栏点歌触发 / Order from action sheet */
+async function handleActionSheetOrder(priority) {
+  actionSheetOpen.value = false
+  await doOrder(priority)
+}
+
+/** 底栏收藏触发 / Favorite from action sheet */
+async function handleActionSheetFavorite() {
+  await toggleFavorite()
+}
+
+/** 底栏歌单触发 / Playlist from action sheet */
+function handleActionSheetPlaylist() {
+  actionSheetOpen.value = false
+  openPlaylistPicker()
+}
+
+/** 打开已排队歌曲管理浮层 / Open queue management menu */
+function openQueueMenu() {
+  queueMenuOpen.value = true
+}
+
+/** 将已在队列中的歌曲顶到下一首 / Boost queued song to play next */
+async function doTop() {
+  queueMenuOpen.value = false
+  if (!queueItem.value?.queueId) {
+    toast('未找到队列项')
+    return
+  }
+  try {
+    await controls.top(queueItem.value.queueId)
+    toast(`《${props.song.title}》已置顶为下一首！`)
+  } catch (e) {
+    toast(e.message || '置顶失败')
+  }
+}
+
+/** 重复点播已在队列中的歌曲 / Force re-order queued song */
+async function doReorder() {
+  queueMenuOpen.value = false
+  await doOrder(false, true)
+}
 
 /**
  * 切换当前歌曲的收藏状态，并弹出提示。
@@ -156,24 +343,81 @@ function escapeHtml(s) {
 .songrow { display:flex;align-items:center;gap:9px;min-height:62px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.07); }
 .rank { width:24px;text-align:center;font-weight:800;color:var(--dim2);font-size:12px; }
 .rank.top { color: var(--gold); }
-.cover { width:46px;height:46px;display:grid;place-items:center;flex:none;overflow:hidden;border-radius:8px;background:#202630 center/cover no-repeat;color:var(--dim2);border:1px solid rgba(255,255,255,.08); }
+.cover { width:46px;height:46px;display:grid;place-items:center;flex:none;overflow:hidden;border-radius:8px;background:#202630 center/cover no-repeat;color:var(--dim2);border:1px solid rgba(255,255,255,.08);cursor:pointer; }
 .cover img { width:100%;height:100%;object-fit:cover;display:block; }
-.info { min-width: 0; }
+.info { min-width: 0; cursor: pointer; }
 .t { font-size:13px;font-weight:650;display:flex;align-items:center;gap:5px; }
 .t :deep(.hl) { color: var(--gold); }
 .s { font-size:10px;color:var(--dim);margin-top:4px; }
 .order-btn {
-  width:44px;height:44px;display:grid;place-items:center;background:var(--gold);color:#201a0f;
+  width:42px;height:42px;display:grid;place-items:center;background:var(--gold);color:#201a0f;
   border-radius:50%;padding:0;flex:none;transition:var(--transition);
+  box-shadow: 0 4px 14px rgba(255,198,75,.28);
 }
-.order-btn:active { transform: scale(.95); }
+.order-btn:active { transform: scale(.92); }
 .order-btn.done { background:rgba(110,214,168,.12);color:var(--mint);box-shadow:none; }
+.order-btn.queued {
+  width: auto; min-width: 58px; height: 32px; padding: 0 10px; border-radius: 999px;
+  background: rgba(110,214,168,.15); border: 1px solid rgba(110,214,168,.4);
+  color: var(--mint); box-shadow: none; font-size: 11px; font-weight: 700;
+}
+.playing-chip {
+  display: inline-flex; align-items: center; gap: 5px; height: 32px; padding: 0 10px;
+  border-radius: 999px; background: rgba(52,211,153,.16); border: 1px solid rgba(52,211,153,.45);
+  color: var(--green); font-size: 11px; font-weight: 700; cursor: pointer;
+}
+.playing-chip em { font-style: normal; }
+.soundwave { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
+.soundwave span {
+  width: 2.5px; height: 100%; background: var(--green); border-radius: 1px;
+  animation: wave 0.8s ease-in-out infinite alternate;
+}
+.soundwave span:nth-child(2) { animation-delay: 0.25s; }
+.soundwave span:nth-child(3) { animation-delay: 0.5s; }
+@keyframes wave {
+  0% { height: 25%; }
+  100% { height: 100%; }
+}
+
 .favorite-btn { display:grid;place-items:center;color:var(--dim2);padding:6px;flex:none;transition:var(--transition); }
 .playlist-btn { display:grid;place-items:center;color:var(--dim2);padding:6px;flex:none;transition:var(--transition); }
 .playlist-btn:active { transform: scale(.88); }
 .favorite-btn.on { color:var(--coral); }
 .favorite-btn:active { transform: scale(.88); }
 .favorite-btn:disabled { opacity: .45; }
+
+/* 操作抽屉底栏 / Action Bottom Sheet */
+.action-mask {
+  position: fixed; inset: 0; z-index: 130;
+  background: rgba(0,0,0,.68); backdrop-filter: blur(8px);
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.action-sheet {
+  width: 100%; max-width: 480px; background: #171c24;
+  border-top: 1px solid rgba(255,255,255,.12); border-radius: 20px 20px 0 0;
+  padding: 18px 20px calc(20px + var(--safe-bottom)); color: #f7f3eb;
+  box-shadow: 0 -10px 40px rgba(0,0,0,.6);
+  animation: slideUp .2s cubic-bezier(.2,0,0,1);
+}
+@keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+.sheet-head { display: flex; align-items: center; gap: 12px; padding-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,.08); }
+.sheet-cover { width: 50px; height: 50px; border-radius: 10px; overflow: hidden; background: #222936; display: grid; place-items: center; flex: none; border: 1px solid var(--glass-border); }
+.sheet-cover img { width: 100%; height: 100%; object-fit: cover; }
+.sheet-info { flex: 1; min-width: 0; }
+.sheet-info strong { display: block; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sheet-info p { margin-top: 4px; font-size: 11px; color: var(--dim); display: flex; align-items: center; gap: 6px; }
+.sheet-close { font-size: 26px; color: var(--dim2); padding: 0 4px; line-height: 1; }
+.sheet-actions { display: flex; flex-direction: column; gap: 9px; margin-top: 16px; }
+.sheet-btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; height: 44px; border-radius: 12px; font-size: 13px; font-weight: 600;
+  background: rgba(255,255,255,.06); color: var(--text); border: 1px solid rgba(255,255,255,.08);
+  transition: var(--transition);
+}
+.sheet-btn:active { transform: scale(.98); }
+.sheet-btn.primary { background: linear-gradient(135deg, var(--gold), #d99a16); color: #1a1200; border: none; font-weight: 700; box-shadow: 0 4px 16px rgba(255,198,75,.25); }
+.sheet-btn.gold { background: rgba(255,198,75,.15); color: var(--gold); border-color: rgba(255,198,75,.35); }
+
 .playlist-mask { position:fixed;inset:0;z-index:120;display:grid;place-items:center;padding:18px;background:rgba(0,0,0,.62); }
 .playlist-dialog { width:min(360px,calc(100vw - 28px));max-height:calc(100vh - 40px);overflow:hidden;border:1px solid rgba(255,255,255,.12);border-radius:14px;background:#17171b;color:#f7f3eb;box-shadow:0 20px 55px rgba(0,0,0,.4); }
 .playlist-dialog-head { display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px;border-bottom:1px solid rgba(255,255,255,.1); }

@@ -34,6 +34,11 @@
             <div class="group-head"><strong>局域网访问</strong><span>控制电视端展示的手机点歌地址</span></div>
             <SettingRow id="qr_address" label="二维码展示地址" hint="留空时使用当前访问地址"><input v-model="form.qr_address" class="input" placeholder="192.168.1.10:8080" /></SettingRow>
           </div>
+          <div class="setting-group">
+            <div class="group-head"><strong>MV 下载与点播</strong><span>设置在线 MV 下载完成后的自动加入队列与伴奏处理</span></div>
+            <SettingRow id="mv_auto_enqueue" label="下载完成后自动加入待播队列" hint="开启后，在线下载入库完成的歌曲会自动加入点播队列"><Toggle v-model="form.mv_auto_enqueue" /></SettingRow>
+            <SettingRow id="mv_auto_convert_dual_track" label="单音轨视频自动触发转双轨伴奏分离" hint="开启后，若下载的视频仅包含单音轨，入库后自动在后台触发双轨伴奏分离"><Toggle v-model="form.mv_auto_convert_dual_track" /></SettingRow>
+          </div>
         </section>
 
         <section v-show="section === 'ai'" class="section ai-section" id="section-ai">
@@ -109,6 +114,40 @@
             <SettingRow label="输出音频编码"><select v-model="form.transcode_audio_codec" class="input"><option value="aac">AAC</option><option value="mp3">MP3</option><option value="opus">Opus</option></select></SettingRow>
             <SettingRow label="硬件加速" :hint="hardwareStatusText"><Toggle v-model="form.transcode_hardware_acceleration" /></SettingRow>
           </div>
+          <div class="setting-group">
+            <div class="group-head"><div><strong>单轨转双轨伴奏系统</strong><span>单音轨 MV 声学滤波消音与 AI 伴奏分离</span></div></div>
+            <SettingRow id="dual_track_engine" label="伴奏分离算法" hint="DSP 极速声学滤波（2~5秒，零额外依赖）；AI 支持外接深度学习服务">
+              <select v-model="form.dual_track_engine" class="input">
+                <option value="DSP">FFmpeg 极速分频带 DSP 消音 (推荐)</option>
+                <option value="REMOTE_AI">远程 AI 分离微服务 (Demucs / UVR5)</option>
+                <option value="LOCAL_AI">本地 AI 模型 (ONNX / UVR-MDX-Net)</option>
+              </select>
+            </SettingRow>
+            <SettingRow v-if="form.dual_track_engine === 'REMOTE_AI'" id="dual_track_remote_url" label="远程 AI 服务地址" hint="例如 http://ai-server:8000/api/separate">
+              <input v-model="form.dual_track_remote_url" class="input" placeholder="http://192.168.1.100:8000/api/separate" />
+            </SettingRow>
+            <SettingRow v-if="form.dual_track_engine === 'REMOTE_AI'" id="dual_track_remote_token" label="远程服务鉴权 Token" hint="Bearer Token（如服务未设密码可留空）">
+              <input v-model="form.dual_track_remote_token" type="password" class="input" placeholder="输入 Token..." />
+            </SettingRow>
+            <SettingRow id="dual_track_concurrency" label="后台转换最大并发数" hint="1~3 个任务并发，低算力 NAS 建议设为 1">
+              <select v-model.number="form.dual_track_concurrency" class="input">
+                <option :value="1">1 个并发 (低 CPU 占用)</option>
+                <option :value="2">2 个并发 (默认推荐)</option>
+                <option :value="3">3 个并发 (多核高算力)</option>
+              </select>
+            </SettingRow>
+            <SettingRow id="dual_track_backup_original" label="转换前备份原文件" hint="生成 .original.bak，转换后可在管理后台撤销恢复原文件">
+              <Toggle v-model="form.dual_track_backup_original" />
+            </SettingRow>
+            <SettingRow id="dual_track_audio_bitrate" label="伴奏音频编码码率" hint="重封装后 Track 1 伴奏轨 AAC 码率">
+              <select v-model="form.dual_track_audio_bitrate" class="input">
+                <option value="128k">128 kbps</option>
+                <option value="192k">192 kbps (默认推荐)</option>
+                <option value="256k">256 kbps (高保真)</option>
+                <option value="320k">320 kbps (最高品质)</option>
+              </select>
+            </SettingRow>
+          </div>
         </section>
 
         <section v-show="section === 'tv'" class="section" id="section-tv">
@@ -175,7 +214,7 @@ const categories = [
   { key: 'maintenance', label: '数据维护', description: '修复与清理', icon: Wrench }
 ]
 const search = ref(''); const section = ref(route.query.section && categories.some(x => x.key === route.query.section) ? route.query.section : 'basic')
-const form = reactive({ library_watch_enabled:false, qr_address:'', delete_source_after_transcode:false, tv_video_scale_mode:'zoom', standby_carousel:true, standby_source:'mixed', standby_song_ids:[], standby_logo_path:'', anti_burn:true, mini_qr:true, standby_welcome:'今晚开唱', standby_subtitle:'手机点歌，电视欢唱\n一家人的客厅 KTV', standby_interval_sec:8, direct_copy_containers:['mp4','m4v','mkv'], direct_copy_video_codecs:['h264','hevc'], direct_copy_audio_codecs:['aac','mp3'], transcode_audio_only:false, transcode_output_container:'mkv', transcode_video_codec:'h264', transcode_audio_codec:'aac', transcode_hardware_acceleration:false })
+const form = reactive({ library_watch_enabled:false, qr_address:'', delete_source_after_transcode:false, tv_video_scale_mode:'zoom', standby_carousel:true, standby_source:'mixed', standby_song_ids:[], standby_logo_path:'', anti_burn:true, mini_qr:true, standby_welcome:'今晚开唱', standby_subtitle:'手机点歌，电视欢唱\n一家人的客厅 KTV', standby_interval_sec:8, direct_copy_containers:['mp4','m4v','mkv'], direct_copy_video_codecs:['h264','hevc'], direct_copy_audio_codecs:['aac','mp3'], transcode_audio_only:false, transcode_output_container:'mkv', transcode_video_codec:'h264', transcode_audio_codec:'aac', transcode_hardware_acceleration:false, dual_track_engine:'DSP', dual_track_remote_url:'', dual_track_remote_token:'', dual_track_concurrency:1, dual_track_backup_original:false, dual_track_audio_bitrate:'192k', mv_auto_enqueue:true, mv_auto_convert_dual_track:false })
 const ai = reactive({ enabled:false, apiKeyConfigured:false, apiKeySuffix:null, sources:{}, capabilities:{}, lastTestAt:null })
 const aiForm = reactive({ enabled:false, baseUrl:'', apiKey:'', bulkModel:'', reasoningModel:'', timeoutSeconds:60, identityThreshold:.97, classificationThreshold:.92, jsonMode:'AUTO', bulkConcurrency:2, reasoningConcurrency:1 })
 const musicForm = reactive({enabled:false,providers:[],resultLimit:20,timeoutSeconds:5,searchCacheHours:6,concurrencyLimit:1,requestIntervalMs:1500,autoApplyThreshold:.95})
@@ -193,7 +232,9 @@ const Checks = { props:['modelValue','options'], emits:['update:modelValue'], se
 const searchCatalog = {
   basic: [
     { key:'library_watch_enabled', label:'源目录自动扫描', keywords:'监听 扫描 文件' },
-    { key:'qr_address', label:'二维码展示地址', keywords:'局域网 手机 点歌 IP' }
+    { key:'qr_address', label:'二维码展示地址', keywords:'局域网 手机 点歌 IP' },
+    { key:'mv_auto_enqueue', label:'下载完成后自动加入待播队列', keywords:'MV 下载 待播队列 自动点歌' },
+    { key:'mv_auto_convert_dual_track', label:'单音轨视频自动触发转双轨伴奏分离', keywords:'MV 下载 单音轨 双轨 伴奏分离 DSP' }
   ],
   ai: [
     { key:'ai_enabled', label:'启用 AI', keywords:'模型 智能识别' },
@@ -216,6 +257,7 @@ const searchCatalog = {
     { key:'music_sources_interval', label:'同平台请求间隔', keywords:'限速 频率 毫秒' }
   ],
   transcode: [
+    { key:'dual_track_engine', label:'单轨转双轨伴奏系统', keywords:'伴奏 人声 分离 消音 双轨 DSP UVR Demucs' },
     { key:'delete_source_after_transcode', label:'转码成功后删除源文件', keywords:'删源 清理 自动删除' },
     { key:'section-transcode', label:'视频直拷与转码输出', keywords:'容器 编码 白名单 硬件加速' }
   ],
@@ -236,9 +278,10 @@ function jump(item){ selectSection(item.section); nextTick(()=>document.getEleme
 function sourceLabel(value){ return value==='DATABASE'?'管理后台':value==='ENVIRONMENT'?'环境变量':value==='NONE'?'未配置':'默认值' }
 function formatTime(value){ return value ? new Date(value).toLocaleString('zh-CN',{hour12:false}) : '' }
 function applyPreset(p){ if(p.baseUrl) aiForm.baseUrl=p.baseUrl }
-async function load(){ loading.value=true; const [settings,config,music,hw,w] = await Promise.all([api.adminGetSettings().catch(()=>({})),api.adminAiConfig().catch(()=>({})),api.adminMusicSourceConfig().catch(()=>({})),api.adminTranscodeHardware().catch(e=>({reason:e.message})),api.adminWishes().catch(()=>[])]); Object.assign(form,settings); Object.assign(ai,config); Object.assign(aiForm,{enabled:config.enabled,baseUrl:config.baseUrl,bulkModel:config.bulkModel,reasoningModel:config.reasoningModel,timeoutSeconds:config.timeoutSeconds,identityThreshold:config.identityThreshold,classificationThreshold:config.classificationThreshold,jsonMode:config.jsonMode||'AUTO',bulkConcurrency:config.bulkConcurrency||2,reasoningConcurrency:config.reasoningConcurrency||1}); Object.assign(musicForm,{enabled:music.enabled||false,providers:music.providers||[],resultLimit:music.resultLimit||20,timeoutSeconds:music.timeoutSeconds||5,searchCacheHours:music.searchCacheHours||6,concurrencyLimit:music.concurrencyLimit||1,requestIntervalMs:music.requestIntervalMs||1500,autoApplyThreshold:music.autoApplyThreshold??.95});musicStatus.value=music.providerStatus||[]; Object.assign(hardware,hw); wishes.value=w; original.value=snapshot(form); aiOriginal.value=snapshot(aiForm); musicOriginal.value=snapshot(musicForm); dirty.value=false; loading.value=false }
+function applyFormSettings(target, source){ if(!source) return; for(const k of Object.keys(target)){ if(k in source){ target[k] = source[k] } } }
+async function load(){ loading.value=true; const [settings,config,music,hw,w] = await Promise.all([api.adminGetSettings().catch(()=>({})),api.adminAiConfig().catch(()=>({})),api.adminMusicSourceConfig().catch(()=>({})),api.adminTranscodeHardware().catch(e=>({reason:e.message})),api.adminWishes().catch(()=>[])]); applyFormSettings(form, settings); Object.assign(ai,config); Object.assign(aiForm,{enabled:config.enabled||false,baseUrl:config.baseUrl||'',bulkModel:config.bulkModel||'',reasoningModel:config.reasoningModel||'',timeoutSeconds:config.timeoutSeconds||60,identityThreshold:config.identityThreshold??0.97,classificationThreshold:config.classificationThreshold??0.92,jsonMode:config.jsonMode||'AUTO',bulkConcurrency:config.bulkConcurrency||2,reasoningConcurrency:config.reasoningConcurrency||1}); Object.assign(musicForm,{enabled:music.enabled||false,providers:music.providers||[],resultLimit:music.resultLimit||20,timeoutSeconds:music.timeoutSeconds||5,searchCacheHours:music.searchCacheHours||6,concurrencyLimit:music.concurrencyLimit||1,requestIntervalMs:music.requestIntervalMs||1500,autoApplyThreshold:music.autoApplyThreshold??.95});musicStatus.value=music.providerStatus||[]; Object.assign(hardware,hw); wishes.value=w; original.value=snapshot(form); aiOriginal.value=snapshot(aiForm); musicOriginal.value=snapshot(musicForm); dirty.value=false; loading.value=false }
 watch([form,aiForm,musicForm],()=>{ if(!loading.value) dirty.value=snapshot(form)!==original.value||snapshot(aiForm)!==aiOriginal.value||snapshot(musicForm)!==musicOriginal.value },{deep:true})
-async function saveAll(){ try { const updated=await api.adminPutSettings({...form}); Object.assign(form,updated); const config=await api.adminAiPutConfig({...aiForm,apiKey:aiForm.apiKey||null,clearApiKey:clearKey.value}); Object.assign(ai,config); const music=await api.adminPutMusicSourceConfig({...musicForm});Object.assign(musicForm,{enabled:music.enabled,providers:music.providers,resultLimit:music.resultLimit,timeoutSeconds:music.timeoutSeconds,searchCacheHours:music.searchCacheHours,concurrencyLimit:music.concurrencyLimit,requestIntervalMs:music.requestIntervalMs,autoApplyThreshold:music.autoApplyThreshold});musicStatus.value=music.providerStatus||[]; aiForm.apiKey=''; clearKey.value=false; original.value=snapshot(form); aiOriginal.value=snapshot(aiForm); musicOriginal.value=snapshot(musicForm); dirty.value=false } catch(e){ await alertDialog(e.message||'保存失败') } }
+async function saveAll(){ try { const formChanged = snapshot(form) !== original.value; const aiChanged = snapshot(aiForm) !== aiOriginal.value || clearKey.value; const musicChanged = snapshot(musicForm) !== musicOriginal.value; if (formChanged) { const payload={}; for(const k of Object.keys(form)){ payload[k]=form[k] } const updated=await api.adminPutSettings(payload); applyFormSettings(form, updated); original.value=snapshot(form); } if (aiChanged) { const config=await api.adminAiPutConfig({...aiForm,apiKey:aiForm.apiKey||null,clearApiKey:clearKey.value}); Object.assign(ai,config); aiForm.apiKey=''; clearKey.value=false; aiOriginal.value=snapshot(aiForm); } if (musicChanged) { const music=await api.adminPutMusicSourceConfig({...musicForm}); Object.assign(musicForm,{enabled:music.enabled,providers:music.providers,resultLimit:music.resultLimit,timeoutSeconds:music.timeoutSeconds,searchCacheHours:music.searchCacheHours,concurrencyLimit:music.concurrencyLimit,requestIntervalMs:music.requestIntervalMs,autoApplyThreshold:music.autoApplyThreshold}); musicStatus.value=music.providerStatus||[]; musicOriginal.value=snapshot(musicForm); } dirty.value=snapshot(form)!==original.value||snapshot(aiForm)!==aiOriginal.value||snapshot(musicForm)!==musicOriginal.value } catch(e){ await alertDialog(e.message||'保存失败') } }
 function resetChanges(){ Object.assign(form,JSON.parse(original.value)); Object.assign(aiForm,JSON.parse(aiOriginal.value)); Object.assign(musicForm,JSON.parse(musicOriginal.value)); dirty.value=false }
 function chooseModel(model){ if(modelTarget.value==='reasoning') aiForm.reasoningModel=model; else aiForm.bulkModel=model }
 async function loadModels(target='bulk'){ modelTarget.value=target; try { models.value=(await api.adminAiModels()).models||[] } catch(e){ await alertDialog(e.message||'模型列表获取失败') } }
@@ -246,7 +289,7 @@ async function testAi(){ testing.value=true; try { const result=await api.adminA
 async function testMusic(providers){testingMusic.value=true;try{const result=await api.adminTestMusicSources(providers);musicStatus.value=result.providerStatus||musicStatus.value;const success=(result.results||[]).filter(item=>item.healthy).length;musicTestMessage.value=`${success}/${(result.results||[]).length} 个平台连接成功`}catch(e){musicTestMessage.value=e.message||'平台连接测试失败'}finally{testingMusic.value=false}}
 async function restoreTranscodeDefaults(){ if(!await confirmDialog('恢复转码默认规则？',{title:'恢复默认'}))return; const result=await api.adminResetTranscodeDefaults(); Object.assign(form,result) }
 function setStandbySongIds(value){ form.standby_song_ids=[...new Set(value.split(/[,，\s]+/).map(Number).filter(id=>Number.isInteger(id)&&id>0))] }
-async function uploadStandbyLogo(event){ const file=event.target.files?.[0]; if(!file)return; try{await api.adminUploadStandbyLogo(file); Object.assign(form,await api.adminGetSettings()); original.value=snapshot(form)}catch(e){await alertDialog(e.message||'Logo 上传失败')}finally{event.target.value=''} }
+async function uploadStandbyLogo(event){ const file=event.target.files?.[0]; if(!file)return; try{await api.adminUploadStandbyLogo(file); applyFormSettings(form, await api.adminGetSettings()); original.value=snapshot(form)}catch(e){await alertDialog(e.message||'Logo 上传失败')}finally{event.target.value=''} }
 onMounted(load)
 function beforeUnload(e){ if(dirty.value){e.preventDefault();e.returnValue=''} }
 onMounted(()=>window.addEventListener('beforeunload',beforeUnload)); onBeforeUnmount(()=>window.removeEventListener('beforeunload',beforeUnload))

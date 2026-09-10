@@ -37,3 +37,10 @@ music/
 backend/data/
 /data/
 backend/src/main/resources/application-local.yml
+.m2/
+.codex-screenshots/
+doc/
+start-dev.bat
+start-h5.bat
+*.args
+

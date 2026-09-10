@@ -12,6 +12,7 @@
         <router-link class="mi" :class="{ on: active === 'dashboard' }" :to="{ name: 'admin-dashboard' }"><span>▦</span>仪表盘</router-link>
         <router-link class="mi" :class="{ on: active === 'source' }" :to="{ name: 'admin-source-library' }"><span>▤</span>原始音乐管理</router-link>
         <router-link class="mi" :class="{ on: active === 'ktv' }" :to="{ name: 'admin-ktv-library' }"><span>♫</span>KTV曲库</router-link>
+        <router-link class="mi" :class="{ on: active === 'mv' }" :to="{ name: 'admin-mv-download' }"><span>🎬</span>MV下载</router-link>
         <router-link class="mi" :class="{ on: active === 'artists' }" :to="{ name: 'admin-artists' }"><span>♙</span>歌手库</router-link>
         <router-link class="mi" :class="{ on: active === 'ai' }" :to="{ name: 'admin-ai' }"><span>✦</span>主题歌单</router-link>
         <router-link class="mi" :class="{ on: active === 'settings' }" :to="{ name: 'admin-settings' }"><span>⚙</span>系统设置</router-link>

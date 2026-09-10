@@ -81,6 +81,20 @@ export const usePlayerStore = defineStore('player', {
         case 'effect_play':
           this.lastEffect = payload?.effect_id ?? null
           break
+        case 'song_updated':
+          if (this.nowPlaying?.song && this.nowPlaying.song.id === payload?.songId) {
+            if (payload.hasVocalTrack !== undefined) this.nowPlaying.song.hasVocalTrack = payload.hasVocalTrack
+            if (payload.mediaType) this.nowPlaying.song.mediaType = payload.mediaType
+          }
+          if (Array.isArray(this.queue)) {
+            this.queue.forEach(item => {
+              if (item.song && item.song.id === payload?.songId) {
+                if (payload.hasVocalTrack !== undefined) item.song.hasVocalTrack = payload.hasVocalTrack
+                if (payload.mediaType) item.song.mediaType = payload.mediaType
+              }
+            })
+          }
+          break
         default:
           break
       }

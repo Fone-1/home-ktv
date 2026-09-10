@@ -30,6 +30,7 @@ const routes = [
   { path: '/admin', name: 'admin-dashboard', component: () => import('../views/admin/DashboardView.vue'), meta: { public: true, admin: true } },
   { path: '/admin/source-library', name: 'admin-source-library', component: () => import('../views/admin/SourceLibraryView.vue'), meta: { public: true, admin: true } },
   { path: '/admin/ktv-library', name: 'admin-ktv-library', component: () => import('../views/admin/KtvLibraryView.vue'), meta: { public: true, admin: true } },
+  { path: '/admin/mv-download', name: 'admin-mv-download', component: () => import('../views/admin/MvDownloadView.vue'), meta: { public: true, admin: true } },
   { path: '/admin/artists', name: 'admin-artists', component: () => import('../views/admin/ArtistLibraryView.vue'), meta: { public: true, admin: true } },
   { path: '/admin/ktv-library/metadata-scrape', name: 'admin-metadata-scrape', component: () => import('../views/admin/MetadataScrapeView.vue'), meta: { public: true, admin: true } },
   { path: '/admin/songs', redirect: { name: 'admin-ktv-library' } },

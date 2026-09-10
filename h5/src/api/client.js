@@ -180,7 +180,43 @@ export const api = {
     body.append('file', file)
     return request(`/admin/ai/playlists/${id}/cover`, { method: 'POST', body })
   },
-  adminAiReorderPlaylistSongs: (id, songIds) => request(`/admin/ai/playlists/${id}/songs/order`, { method: 'PUT', body: JSON.stringify({ songIds }) })
+  adminAiReorderPlaylistSongs: (id, songIds) => request(`/admin/ai/playlists/${id}/songs/order`, { method: 'PUT', body: JSON.stringify({ songIds }) }),
+
+  // MV 在线检索与下载 (ADM-MV)
+  searchMv: (keyword, provider = 'ALL', limit = 20) =>
+    request(`/mv/search?keyword=${encodeURIComponent(keyword)}&provider=${encodeURIComponent(provider)}&limit=${limit}`),
+  downloadMv: (data) =>
+    request('/mv/download', { method: 'POST', body: JSON.stringify(data) }),
+  listMvTasks: () =>
+    request('/mv/tasks'),
+  cancelMvTask: (id) =>
+    request(`/mv/tasks/${id}/cancel`, { method: 'POST' }),
+  retryMvTask: (id) =>
+    request(`/mv/tasks/${id}/retry`, { method: 'POST' }),
+  deleteMvTask: (id) =>
+    request(`/mv/tasks/${id}`, { method: 'DELETE' }),
+
+  // B 站扫码登录与凭据管理 (ADM-BILI-AUTH)
+  getBilibiliAuthQrCode: () =>
+    request('/mv/bilibili/auth/qrcode'),
+  pollBilibiliAuthQrCode: (key) =>
+    request(`/mv/bilibili/auth/poll?key=${encodeURIComponent(key)}`),
+  getBilibiliAuthStatus: () =>
+    request('/mv/bilibili/auth/status'),
+  refreshBilibiliAuthStatus: () =>
+    request('/mv/bilibili/auth/refresh', { method: 'POST' }),
+  logoutBilibiliAuth: () =>
+    request('/mv/bilibili/auth/logout', { method: 'POST' }),
+
+  // 单轨转双轨伴奏系统 (Single to Dual-Track)
+  convertSongDualTrack: (songId, data = {}) =>
+    request(`/songs/${songId}/convert-dual-track`, { method: 'POST', body: JSON.stringify(data) }),
+  batchConvertSongDualTrack: (data = {}) =>
+    request('/songs/batch-convert-dual-track', { method: 'POST', body: JSON.stringify(data) }),
+  getSongConvertProgress: () =>
+    request('/songs/convert-progress'),
+  rollbackSongDualTrack: (songId) =>
+    request(`/songs/${songId}/rollback-dual-track`, { method: 'POST' })
 }
 
 /**
@@ -196,7 +232,18 @@ export const api = {
 export function makeControls(clientToken) {
   const c = (action, params) => api.control(action, params, clientToken)
   return {
-    order: (songId, force = false) => c('order', { song_id: songId, force }),
+    order: (songId, force = false, priority = false) => c('order', { song_id: songId, force, priority }),
+    orderAndTop: async (songId, force = false) => {
+      const snap = await c('order', { song_id: songId, force, priority: true })
+      const targetId = Number(songId)
+      if (snap?.list?.length) {
+        const item = snap.list.find(q => q.song?.id === targetId)
+        if (item && item.queueId) {
+          try { await c('top', { queue_id: item.queueId }) } catch { /* ignore */ }
+        }
+      }
+      return snap
+    },
     top: (queueId) => c('top', { queue_id: queueId }),
     cancel: (queueId) => c('cancel', { queue_id: queueId }),
     shuffle: () => c('shuffle', {}),

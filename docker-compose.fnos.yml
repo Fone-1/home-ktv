@@ -1,0 +1,109 @@
+# ==============================================================================
+# Home KTV - 飞牛 fnOS (NAS) 生产环境专属 Docker Compose 编排文件
+# 适用场景：飞牛 fnOS 容器管理 / Docker Compose 项目部署
+# 特性：
+#   1. 支持直接基于工作区源码构建（集成在线 MV 下载、单轨转双轨伴奏与 H5 优化全量最新特性）
+#   2. 支持对接服务器现有 PostgreSQL（默认端口 5433，密码 12345678.）或内置独立数据库
+#   3. 透传 Intel 核显 /dev/dri 开启 VAAPI 硬件转码加速
+#   4. 开放 8080 (Web/API/WebSocket/媒体) 与 18888 (电视端 UDP 服务发现)
+# ==============================================================================
+name: home-ktv
+
+services:
+  # --------------------------------------------------------------------------
+  # 后端及前端整合服务 (包含 Spring Boot 3.5、Vue 3 H5、FFmpeg 与音视频处理引擎)
+  # --------------------------------------------------------------------------
+  ktv:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      args:
+        BASE_REGISTRY: docker.m.daocloud.io
+    image: home-ktv:latest
+    container_name: ktv-app
+    restart: unless-stopped
+    stop_grace_period: 30s
+    devices:
+      # 飞牛 fnOS Intel 核显透传（用于 VAAPI 极速硬件转码与音视频处理）
+      - /dev/dri:/dev/dri
+    environment:
+      # 服务监听端口（与下方发布的 TCP 端口一致）
+      SERVER_PORT: 8080
+      # 数据库连接：默认连接到当前宿主机已部署的 PostgreSQL（端口 5433）
+      # 如需使用下方内置的 db 容器，请将 URL 改为：jdbc:postgresql://db:5432/ktv
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL:-jdbc:postgresql://10.17.220.79:5433/ktv}
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME:-ktv}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:-12345678.}
+      # 媒体路径映射
+      KTV_SOURCE_LIBRARY_PATH: /source-music
+      KTV_LIBRARY_PATH: /music
+      KTV_DATA_PATH: /data
+      # 局域网服务发现配置
+      KTV_DISCOVERY_ENABLED: "true"
+      KTV_DISCOVERY_UDP_PORT: 18888
+      KTV_DISCOVERY_NAME: "家庭KTV"
+      # AI 模型配置（默认关闭，可随时在后台系统设置中接入 DeepSeek 等兼容接口）
+      KTV_AI_ENABLED: "false"
+      KTV_AI_BASE_URL: "https://api.deepseek.com"
+      KTV_AI_API_KEY: ""
+      KTV_AI_MODEL: "deepseek-v4-flash"
+      KTV_AI_AUTO_APPLY_CONFIDENCE: "0.90"
+      # JVM 内存调优参数
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -Xmx768m"
+      TZ: Asia/Shanghai
+    ports:
+      # 面向手机端 H5、浏览器管理后台、电视端业务通信与媒体推流
+      - "8080:8080/tcp"
+      # 电视端自动局域网发现端口
+      - "18888:18888/udp"
+    volumes:
+      # 原始素材上传/下载目录（建议挂载至 NAS 机械硬盘或 SSD 存储空间）
+      - type: bind
+        source: ./source-music
+        target: /source-music
+        bind:
+          create_host_path: true
+      # 整理归档后的精选曲库目录
+      - type: bind
+        source: ./music
+        target: /music
+        bind:
+          create_host_path: true
+      # 应用运行元数据、封面、歌词与临时转码缓存
+      - type: bind
+        source: ./data
+        target: /data
+        bind:
+          create_host_path: true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/health | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  # --------------------------------------------------------------------------
+  # 内置独立 PostgreSQL 服务（备选：若不复用宿主机 5433 现有库，可取消注释并启用）
+  # --------------------------------------------------------------------------
+  # db:
+  #   image: docker.m.daocloud.io/library/postgres:16-alpine
+  #   container_name: ktv-db
+  #   environment:
+  #     POSTGRES_DB: ktv
+  #     POSTGRES_USER: ktv
+  #     POSTGRES_PASSWORD: change-me-before-deploy
+  #     TZ: Asia/Shanghai
+  #   volumes:
+  #     - type: bind
+  #       source: ./postgres
+  #       target: /var/lib/postgresql/data
+  #       bind:
+  #         create_host_path: true
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U ktv -d ktv"]
+  #     interval: 5s
+  #     timeout: 5s
+  #     retries: 20
+  #     start_period: 10s
+  #   restart: unless-stopped
+  #   stop_grace_period: 1m

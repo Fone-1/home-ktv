@@ -65,7 +65,7 @@ public class StreamController {
      *         file not found or missing on disk → 404;
      *         Range out of bounds → 416 Range Not Satisfiable
      */
-    @GetMapping("/stream/{fileId}")
+    @GetMapping({"/stream/{fileId}", "/stream/{fileId:[0-9]+}.{ext:[a-zA-Z0-9]+}"})
     public ResponseEntity<StreamingResponseBody> stream(
             @PathVariable Long fileId,
             @RequestHeader(value = HttpHeaders.RANGE, required = false) String rangeHeader) {

@@ -42,6 +42,10 @@
       </div>
       <div class="note">{{ canVocal ? '当前为 KTV 版，支持音轨切换' : 'MV/音频版无伴唱音轨，此处禁用' }}</div>
       <button v-if="canVocal" class="track-fix" @click="swapVocalTracks">原唱和伴唱弄反了？纠正并记住</button>
+      <button v-if="!canVocal && song" class="dual-btn" :disabled="convertingDualTrack" @click="triggerConvertDualTrack">
+        <Sparkles :size="15" />
+        <span>{{ convertingDualTrack ? '⚡ 伴奏生成中 (约2~5秒)...' : '⚡ 一键去人声生成伴奏 (转双轨KTV版)' }}</span>
+      </button>
     </section>
 
     <!-- 氛围音效（P3.1 完整；此处已可发送）/ Ambience Effects (P3.1 complete; available here) -->
@@ -73,13 +77,15 @@ import { useUserStore } from '../stores/user'
 import { makeControls } from '../api/client'
 import { useToast } from '../composables/useToast'
 import { confirmDialog } from '../composables/useDialog'
+import api from '../api/client'
 import TabBar from '../components/TabBar.vue'
-import { GlassWater, Hand, Lightbulb, Megaphone, Minus, Music2, PartyPopper, Pause, Play, Plus, RotateCcw, SkipForward } from 'lucide-vue-next'
+import { GlassWater, Hand, Lightbulb, Megaphone, Minus, Music2, PartyPopper, Pause, Play, Plus, RotateCcw, SkipForward, Sparkles } from 'lucide-vue-next'
 
 const player = usePlayerStore()
 const user = useUserStore()
 const { toast } = useToast()
 const controls = makeControls(user.clientToken)
+const convertingDualTrack = ref(false)
 
 const song = computed(() => player.nowPlaying?.song)
 const coverUrl = computed(() => song.value?.coverUrl || '')
@@ -173,6 +179,35 @@ async function swapVocalTracks() {
   try { await controls.swapVocalTracks(); toast('已纠正，本歌曲下次播放继续生效') }
   catch (e) { toast(e.message || '纠正失败') }
 }
+
+/** 一键触发单轨去人声生成双轨伴奏 */
+async function triggerConvertDualTrack() {
+  if (!song.value?.id) return
+  const currentSong = song.value
+  const confirmed = await confirmDialog(`将为《${currentSong.title}》使用极速 DSP 声学滤波分离伴奏，转换后即可自由切换原唱与伴唱，耗时约 2~5 秒。是否开始？`, {
+    title: '生成 KTV 伴奏'
+  })
+  if (!confirmed) return
+  convertingDualTrack.value = true
+  try {
+    await api.convertSongDualTrack(currentSong.id, { mode: 'DSP', backupOriginal: false, outputFormat: 'mp4' })
+    toast('已提交伴奏生成任务，正在快速消音重构中...')
+    let checkCount = 0
+    const checkTimer = setInterval(() => {
+      checkCount++
+      if (song.value?.hasVocalTrack || checkCount > 10) {
+        clearInterval(checkTimer)
+        convertingDualTrack.value = false
+        if (song.value?.hasVocalTrack) {
+          toast('伴奏生成完成！已点亮伴唱模式')
+        }
+      }
+    }, 1000)
+  } catch (e) {
+    convertingDualTrack.value = false
+    toast(e.message || '生成伴奏失败')
+  }
+}
 /**
  * 发送氛围音效（鼓掌/欢呼/倒彩/干杯）。
  *
@@ -216,6 +251,16 @@ async function effect(e) {
 .note { font-size: 11px; color: var(--dim2); margin-top: 7px; }
 .track-fix { width: 100%; margin-top: 10px; padding: 9px 12px; border-radius: 10px; border: 1px dashed rgba(240,199,66,.35);
   background: rgba(240,199,66,.06); color: var(--gold); font-size: 12px; }
+.dual-btn {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%; margin-top: 10px; padding: 10px 14px;
+  background: linear-gradient(135deg, rgba(240,199,66,.2) 0%, rgba(240,199,66,.08) 100%);
+  border: 1px solid rgba(240,199,66,.35); border-radius: 10px;
+  color: var(--gold); font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: all .2s ease;
+}
+.dual-btn:hover { background: rgba(240,199,66,.25); }
+.dual-btn:disabled { opacity: .6; cursor: not-allowed; }
 .seg { display:flex;padding:3px;background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow:hidden; }
 .seg.disabled { opacity: .5; }
 .seg div { flex: 1; text-align: center; padding: 10px; font-size: 14px; color: var(--dim); }
