@@ -29,8 +29,10 @@ COPY backend/pom.xml .
 COPY backend/src ./src
 COPY dist/tv-apk ./src/main/resources/static/tv-apk
 COPY --from=web-build /workspace/backend/src/main/resources/static/m ./src/main/resources/static/m
+COPY backend/settings-docker.xml /usr/share/maven/conf/settings.xml
+COPY backend/settings-docker.xml /usr/share/maven/ref/settings.xml
 RUN --mount=type=cache,target=/root/.m2 \
-    mvn -B clean package -DskipTests
+    mvn -B clean package -DskipTests -U -s /usr/share/maven/conf/settings.xml -Djava.net.preferIPv4Stack=true
 
 FROM ${BASE_REGISTRY}/library/eclipse-temurin:21-jre-alpine
 ARG KTV_RELEASE_VERSION=0.1.0-dev
