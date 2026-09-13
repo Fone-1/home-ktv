@@ -23,10 +23,12 @@ public final class FilenameParser {
         if (base.isBlank()) return ParsedMeta.unrecognized(base);
 
         // Strip catalogue numbers and transport/version markers before identifying fields.
-        base = base.replaceFirst("^\\s*\\d{1,5}\\s*[-._)】]\\s*", "");
+        base = base.replaceFirst("^\\s*\\d{1,5}\\s*[-._、)】]\\s*", "");
         base = base.replaceAll("\\s*\\[(?:KTV|MTV|MV|LIVE|伴奏|原唱|消音|卡拉OK)\\]\\s*$", "");
         base = base.replaceAll("\\s*\\((?:KTV|MTV|MV|LIVE|伴奏|原唱|消音|卡拉OK|Official Video)\\)\\s*$", "");
         base = base.replaceAll("(?i)\\s*[-|]\\s*(KTV|MTV|MV|LIVE|伴奏|原唱|消音|卡拉OK)\\s*$", "");
+        // 去除尾部常见的下载任务 ID 或版本序号（如 " - 1", " - 3"）
+        base = base.replaceAll("\\s*[-_]\\s*\\d{1,5}\\s*$", "");
 
         // 统一常见分隔符为标准 " - "
         String normalized = base
@@ -52,8 +54,17 @@ public final class FilenameParser {
             return ParsedMeta.unrecognized(base.trim());
         }
 
-        // For a name containing several separators, the first/last non-marker segment
-        // is usually the catalogue suffix; retain it in the title rather than swapping identities.
+        // 若右侧部分本身还包含类似 "002.周杰伦-晴天" 的内嵌歌手-歌名结构，进一步拆解
+        String[] nested = splitByDash(right);
+        if (nested != null) {
+            String nestedLeft = cleanPart(nested[0]);
+            String nestedRight = cleanPart(nested[1]);
+            if (!nestedLeft.isEmpty() && !nestedRight.isEmpty() && !nestedLeft.matches("\\d+") && !nestedRight.matches("\\d+")) {
+                left = nestedLeft;
+                right = nestedRight;
+            }
+        }
+
         return "title_artist".equals(rule) ? ParsedMeta.of(left, right) : ParsedMeta.of(right, left);
     }
 
@@ -68,7 +79,12 @@ public final class FilenameParser {
     }
 
     private static String cleanPart(String value) {
-        return value.replaceAll("^\\s*[【\\[][^】\\]]+[】\\]]\\s*", "").trim();
+        String cleaned = value.replaceAll("^\\s*[【\\[][^】\\]]+[】\\]]\\s*", "");
+        // 去除段内前导曲目序号（如 002.）
+        cleaned = cleaned.replaceFirst("^\\s*\\d{1,5}\\s*[-._、)】]\\s*", "");
+        // 去除段内尾部版本序号（如 - 1）
+        cleaned = cleaned.replaceAll("\\s*[-_]\\s*\\d{1,5}\\s*$", "");
+        return cleaned.trim();
     }
 
     static String stripExtension(String filename) {

@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <AdminLayout active="ktv">
     <div class="scrape-page">
       <header class="page-head">
@@ -165,8 +165,23 @@ async function resumeTask(){taskAction.value=true;try{await api.adminResumeMetad
 async function retryItem(item){itemBusy.value=item.id;try{await api.adminRetryMetadataScrapeItem(task.value.batchId,item.id);await refreshTask()}catch(e){await alertDialog(e.message||'重试失败')}finally{itemBusy.value=null}}
 function setStatus(value){statusFilter.value=value;taskPage.value=0;refreshTask()}
 function changeTaskPage(value){taskPage.value=value;refreshTask()}
-async function openReview(item){reviewKeyword.value=[item.title,item.artist].filter(Boolean).join(' ');reviewing.value={...item,standalone:false};await loadReviewData(false)}
-async function openStandaloneReview(song){reviewKeyword.value=[song.title,song.artist].filter(Boolean).join(' ');reviewing.value={songId:song.id,title:song.title,artist:song.artist,standalone:true};await loadReviewData(true)}
+function cleanReviewKeyword(title, artist) {
+  let t = String(title || '').trim()
+  t = t.replace(/^(?:\d{1,5}|[a-zA-Z]\d{1,4})[.\s\-_、)）\]】]+/g, '')
+  t = t.replace(/[-_\s]+(?:\d{1,4}|[a-zA-Z]\d{0,3})$/g, '')
+  t = t.replace(/[（(\[{【]\s*(?:ktv|mtv|mv|live|演|原唱|伴奏|消音|卡拉ok|无损|高品质|高清|超清|1080p|4k|720p|官方|官方版|官方mv|official\s*video|official\s*mv|rolling\s*lyrics|滚动歌词|无杂音|纯享版|纯享|单曲纯享|动态歌词)\s*[)）\]}】]/gi, '')
+  const embedded = t.split(/\s*[-—–－_|\/]\s*/)
+  if (embedded.length >= 2 && embedded[0] && embedded[1]) {
+    return embedded[0].trim() + " " + embedded[1].trim()
+  }
+  const cleanA = String(artist || '').trim()
+  if (cleanA && !['未知', '未知歌手', '未知UP主', '群星'].includes(cleanA)) {
+    return (t + " " + cleanA).trim()
+  }
+  return t
+}
+async function openReview(item){reviewKeyword.value=cleanReviewKeyword(item.title,item.artist);reviewing.value={...item,standalone:false};await loadReviewData(false)}
+async function openStandaloneReview(song){reviewKeyword.value=cleanReviewKeyword(song.title,song.artist);reviewing.value={songId:song.id,title:song.title,artist:song.artist,standalone:true};await loadReviewData(true)}
 function closeReview(){if(applying.value)return;reviewing.value=null;reviewMatches.value=[];reviewSelected.value=null;reviewManual.value=false;reviewSong.value=null;reviewProvider.value='';reviewKeyword.value='';reviewLyricLoading.value=false}
 async function searchReview(){if(reviewKeyword.value.length<2){await alertDialog('请输入至少 2 个字符的搜索关键词');return}await loadReviewData(true)}
 async function loadReviewData(refresh){

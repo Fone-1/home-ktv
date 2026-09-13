@@ -73,11 +73,38 @@ public class MusicSourceSearchService {
 
     public List<SongMatch> matches(long songId, String keyword, Set<MusicProvider> requestedProviders, boolean refresh) {
         Song song = songRepository.findById(songId).orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在"));
-        String query = keyword == null || keyword.isBlank() ? song.getTitle() + " " + song.getArtist() : keyword;
-        SearchResponse result = search(query, requestedProviders, refresh);
-        List<SongMatch> matches = result.groups().stream().flatMap(group -> group.sources().stream())
-                .map(track -> new SongMatch(track, matcher.score(song, track)))
-                .sorted(java.util.Comparator.comparingDouble(SongMatch::score).reversed()).limit(30).toList();
+        List<SongMatch> matches;
+        if (keyword != null && !keyword.isBlank()) {
+            // 调用方显式传入搜索词（例如在人工审核弹窗中手动搜索）
+            SearchResponse result = search(keyword, requestedProviders, refresh);
+            matches = result.groups().stream().flatMap(group -> group.sources().stream())
+                    .map(track -> new SongMatch(track, matcher.score(song, track)))
+                    .sorted(java.util.Comparator.comparingDouble(SongMatch::score).reversed()).limit(30).toList();
+        } else {
+            // 自动刮削与缺省匹配：使用 ExternalTrackMatcher 生成优先级候选词
+            List<String> candidateQueries = matcher.generateCandidateQueries(song);
+            Map<String, SongMatch> bestTracks = new LinkedHashMap<>();
+            for (String query : candidateQueries) {
+                try {
+                    SearchResponse result = search(query, requestedProviders, refresh);
+                    for (var group : result.groups()) {
+                        for (ExternalTrack track : group.sources()) {
+                            String trackKey = track.provider() + ":" + track.externalId();
+                            double score = matcher.score(song, track);
+                            bestTracks.compute(trackKey, (k, old) -> old == null || score > old.score()
+                                    ? new SongMatch(track, score) : old);
+                        }
+                    }
+                } catch (Exception ignored) {
+                    // 单个候选词搜索异常时平滑降级，尝试下一个候选词
+                }
+                // 若首轮搜索已经找到高质量匹配（置信度 >= 0.85），无需继续消耗额外网络请求
+                double topScore = bestTracks.values().stream().mapToDouble(SongMatch::score).max().orElse(0.0);
+                if (topScore >= 0.85) break;
+            }
+            matches = bestTracks.values().stream()
+                    .sorted(java.util.Comparator.comparingDouble(SongMatch::score).reversed()).limit(30).toList();
+        }
         matches.forEach(match -> storage.saveMatch(songId, match.track(), match.score()));
         return matches;
     }
