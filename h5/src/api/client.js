@@ -1,4 +1,4 @@
-/**
+﻿/**
  * REST API 客户端封装模块。
  * 基址为 /api，开发时由 Vite 代理到 :8080，详设§11。
  *
@@ -187,6 +187,10 @@ export const api = {
     request(`/mv/search?keyword=${encodeURIComponent(keyword)}&provider=${encodeURIComponent(provider)}&limit=${limit}`),
   downloadMv: (data) =>
     request('/mv/download', { method: 'POST', body: JSON.stringify(data) }),
+  getMvParts: (provider, externalId) =>
+    request('/mv/parts?provider=' + encodeURIComponent(provider) + '&externalId=' + encodeURIComponent(externalId)),
+  batchDownloadMv: (items) =>
+    request('/mv/batch-download', { method: 'POST', body: JSON.stringify(items) }),
   listMvTasks: () =>
     request('/mv/tasks'),
   cancelMvTask: (id) =>

@@ -74,7 +74,15 @@
         <div v-if="onlineMvLoading" class="mv-modal-loading">正在搜索网易云与 B 站视频…</div>
         <div v-else-if="onlineMvList.length" class="mv-modal-list">
           <div v-for="item in onlineMvList" :key="item.provider + item.externalId" class="mv-modal-item">
-            <img v-if="item.coverUrl" :src="item.coverUrl" class="item-cover" loading="lazy" />
+            <!-- 增加 referrerpolicy 解决防盗链，加载失败时优雅降级为占位图标 -->
+            <img
+              v-if="item.coverUrl && !isMvCoverFailed(item)"
+              :src="item.coverUrl"
+              class="item-cover"
+              loading="lazy"
+              referrerpolicy="no-referrer"
+              @error="onMvCoverError(item)"
+            />
             <div v-else class="item-cover fallback">🎬</div>
             <div class="item-info">
               <div class="item-title">{{ item.title }}</div>
@@ -149,6 +157,16 @@ const hotTags = ['周杰伦', '陈奕迅', '王菲', '邓紫棋', '海阔天空'
 const onlineMvOpen = ref(false)
 const onlineMvLoading = ref(false)
 const onlineMvList = ref([])
+// 记录全网 MV 封面加载失败项，避免渲染异常
+const failedMvCoverKeys = ref(new Set())
+const onMvCoverError = (item) => {
+  if (!item) return
+  failedMvCoverKeys.value.add((item.provider || '') + '_' + (item.externalId || ''))
+}
+const isMvCoverFailed = (item) => {
+  if (!item) return false
+  return failedMvCoverKeys.value.has((item.provider || '') + '_' + (item.externalId || ''))
+}
 const downloadingMap = reactive({})
 
 onMounted(() => {
@@ -245,6 +263,7 @@ async function openOnlineMv() {
   if (!kw.value.trim()) return
   onlineMvOpen.value = true
   onlineMvLoading.value = true
+  failedMvCoverKeys.value.clear()
   try {
     const res = await api.searchMv(kw.value.trim(), 'ALL', 15)
     onlineMvList.value = res.items || []

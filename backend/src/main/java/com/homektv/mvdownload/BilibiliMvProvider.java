@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homektv.config.SslContextHelper;
 import com.homektv.web.ApiException;
+import com.homektv.web.dto.BilibiliPartDto;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -189,25 +190,71 @@ public class BilibiliMvProvider implements MvSearchProvider {
         }
     }
 
+    /**
+     * 外部传入标识符解析结果（支持纯 bvid、带分P参数 BVxxx?p=2 或 BVxxx?p=2&cid=123）
+     */
+    public record ParsedBiliTarget(String bvid, int page, long cid) {}
+
+    /**
+     * 解析外部标识符，提取 bvid、目标分集号 page 和目标 cid
+     */
+    public static ParsedBiliTarget parseExternalId(String externalId) {
+        if (externalId == null || externalId.isBlank()) return new ParsedBiliTarget("", 1, 0L);
+        String s = externalId.trim();
+        String bvid = s;
+        int page = 1;
+        long cid = 0L;
+        int qIdx = s.indexOf('?');
+        if (qIdx >= 0) {
+            bvid = s.substring(0, qIdx).trim();
+            String query = s.substring(qIdx + 1);
+            for (String pair : query.split("&")) {
+                int eq = pair.indexOf('=');
+                if (eq > 0) {
+                    String k = pair.substring(0, eq).trim();
+                    String v = pair.substring(eq + 1).trim();
+                    if ("p".equalsIgnoreCase(k) || "page".equalsIgnoreCase(k)) {
+                        try { page = Math.max(1, Integer.parseInt(v)); } catch (Exception ignored) {}
+                    } else if ("cid".equalsIgnoreCase(k)) {
+                        try { cid = Long.parseLong(v); } catch (Exception ignored) {}
+                    }
+                }
+            }
+        } else if (s.contains(":")) {
+            String[] parts = s.split(":");
+            bvid = parts[0].trim();
+            if (parts.length > 1) {
+                try { page = Math.max(1, Integer.parseInt(parts[1].trim())); } catch (Exception ignored) {}
+            }
+            if (parts.length > 2) {
+                try { cid = Long.parseLong(parts[2].trim()); } catch (Exception ignored) {}
+            }
+        }
+        return new ParsedBiliTarget(bvid, page, cid);
+    }
+
     @Override
     public MvStreamInfo resolveStream(String externalId, String desiredResolution, Duration timeout) {
-        String bvid = externalId.trim();
+        ParsedBiliTarget target = parseExternalId(externalId);
+        String bvid = target.bvid();
         // 确保 WBI 密钥与指纹处于可用就绪状态
         wbi.ensureReady(httpClient);
 
-        // 策略 0: 优先尝试从视频网页 (SSR) 直接提取内嵌的 window.__playinfo__ (最高稳定性与抗拦截)
-        MvStreamInfo webStream = fetchPlayStreamFromWebPage(bvid, timeout);
-        if (webStream != null) {
-            return webStream;
+        // 策略 0: 如果未指定分P（默认第 1 集）且无显式 cid，优先尝试从视频网页 (SSR) 直接提取 window.__playinfo__
+        if (target.page() <= 1 && target.cid() <= 0) {
+            MvStreamInfo webStream = fetchPlayStreamFromWebPage(bvid, timeout);
+            if (webStream != null) {
+                return webStream;
+            }
         }
 
-        // 1. 获取视频分段 CID (包含自愈重试与防 412 处理)
-        long cid = resolveCid(bvid, timeout);
+        // 1. 获取目标分集 CID (已携带 cid 直接使用，否则依据目标分P page 进行匹配查找)
+        long cid = target.cid() > 0 ? target.cid() : resolveCid(bvid, target.page(), timeout);
         if (cid <= 0) {
-            throw new ApiException("MV_STREAM_NOT_FOUND", "未能获取 B 站视频分段信息 (cid: " + bvid + ")");
+            throw new ApiException("MV_STREAM_NOT_FOUND", "未能获取 B 站视频分段信息 (bvid=" + bvid + ", p=" + target.page() + ")");
         }
 
-        // 2. API 接口多重策略获取播放流 (DASH优先、单流备用、WBI自愈重试)
+        // 2. API 接口多重策略获取指定 CID 的独立播放流 (DASH优先、单流备用、WBI自愈重试)
         List<String> failureReasons = new ArrayList<>();
         MvStreamInfo streamInfo = fetchPlayStreamWithRetry(bvid, cid, desiredResolution, timeout, failureReasons);
         if (streamInfo != null) {
@@ -215,7 +262,92 @@ public class BilibiliMvProvider implements MvSearchProvider {
         }
 
         String detail = failureReasons.isEmpty() ? "" : " [" + String.join("; ", failureReasons) + "]";
-        throw new ApiException("MV_STREAM_NOT_FOUND", "未能解析 B 站播放流地址: " + bvid + detail);
+        throw new ApiException("MV_STREAM_NOT_FOUND", "未能解析 B 站播放流地址: " + bvid + " (p=" + target.page() + ", cid=" + cid + ")" + detail);
+    }
+
+    /**
+     * 获取 B 站视频全部可用分集/分P列表
+     */
+    public List<BilibiliPartDto> fetchParts(String rawExternalId, Duration timeout) {
+        ParsedBiliTarget target = parseExternalId(rawExternalId);
+        String bvid = target.bvid();
+        if (bvid.isBlank()) return List.of();
+
+        // 1. 优先调用轻量分P列表接口 /x/player/pagelist?bvid=
+        try {
+            String url = "https://api.bilibili.com/x/player/pagelist?bvid=" + bvid;
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .header("Referer", "https://www.bilibili.com/video/" + bvid + "/")
+                    .header("Origin", "https://www.bilibili.com")
+                    .header("User-Agent", USER_AGENT)
+                    .header("Cookie", wbi.getCookieHeader())
+                    .header("Accept", "application/json, text/plain, */*")
+                    .timeout(timeout)
+                    .GET()
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            JsonNode root = safeReadJson(response, "B站分P列表(" + bvid + ")");
+            if (root != null && root.path("code").asInt(-1) == 0) {
+                JsonNode data = root.path("data");
+                if (data.isArray() && !data.isEmpty()) {
+                    List<BilibiliPartDto> parts = new ArrayList<>();
+                    for (JsonNode node : data) {
+                        int page = node.path("page").asInt(parts.size() + 1);
+                        long cid = node.path("cid").asLong(0);
+                        String part = node.path("part").asText("").trim();
+                        if (part.isBlank()) part = "第 " + page + " 集";
+                        int durationMs = node.path("duration").asInt(0) * 1000;
+                        String firstFrame = node.path("first_frame").asText(null);
+                        if (firstFrame != null && firstFrame.startsWith("//")) firstFrame = "https:" + firstFrame;
+                        else if (firstFrame != null && firstFrame.startsWith("http://")) firstFrame = "https://" + firstFrame.substring(7);
+                        parts.add(new BilibiliPartDto(page, cid, part, durationMs, firstFrame));
+                    }
+                    if (!parts.isEmpty()) return parts;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("通过 pagelist 获取 B 站分P异常: {}", e.getMessage());
+        }
+
+        // 2. 备用通过视频详情接口 /x/web-interface/view
+        try {
+            String viewUrl = "https://api.bilibili.com/x/web-interface/view?bvid=" + bvid;
+            HttpRequest request = HttpRequest.newBuilder(URI.create(viewUrl))
+                    .header("Referer", "https://www.bilibili.com/video/" + bvid + "/")
+                    .header("Origin", "https://www.bilibili.com")
+                    .header("User-Agent", USER_AGENT)
+                    .header("Cookie", wbi.getCookieHeader())
+                    .header("Accept", "application/json, text/plain, */*")
+                    .timeout(timeout)
+                    .GET()
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            JsonNode root = safeReadJson(response, "B站视频详情分P(" + bvid + ")");
+            if (root != null && root.path("code").asInt(-1) == 0) {
+                JsonNode pages = root.path("data").path("pages");
+                if (pages.isArray() && !pages.isEmpty()) {
+                    List<BilibiliPartDto> parts = new ArrayList<>();
+                    for (JsonNode node : pages) {
+                        int page = node.path("page").asInt(parts.size() + 1);
+                        long cid = node.path("cid").asLong(0);
+                        String part = node.path("part").asText("").trim();
+                        if (part.isBlank()) part = "第 " + page + " 集";
+                        int durationMs = node.path("duration").asInt(0) * 1000;
+                        String firstFrame = node.path("first_frame").asText(null);
+                        if (firstFrame != null && firstFrame.startsWith("//")) firstFrame = "https:" + firstFrame;
+                        else if (firstFrame != null && firstFrame.startsWith("http://")) firstFrame = "https://" + firstFrame.substring(7);
+                        parts.add(new BilibiliPartDto(page, cid, part, durationMs, firstFrame));
+                    }
+                    return parts;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("通过 view 获取 B 站分P异常: {}", e.getMessage());
+        }
+
+        return List.of();
     }
 
     /**
@@ -268,6 +400,13 @@ public class BilibiliMvProvider implements MvSearchProvider {
      * 解析视频 CID（包含多P兼容、状态码防御与 412 自愈）
      */
     private long resolveCid(String bvid, Duration timeout) {
+        return resolveCid(bvid, 1, timeout);
+    }
+
+    /**
+     * 解析视频目标分P的 CID（支持指定分集、状态码防御与 412 自愈）
+     */
+    private long resolveCid(String bvid, int targetPage, Duration timeout) {
         for (int attempt = 1; attempt <= 2; attempt++) {
            try {
                String viewUrl = "https://api.bilibili.com/x/web-interface/view?bvid=" + bvid;
@@ -303,13 +442,23 @@ public class BilibiliMvProvider implements MvSearchProvider {
                     continue;
                 }
                 if (code == 0) {
-                    long cid = root.path("data").path("cid").asLong(0);
-                    if (cid > 0) return cid;
                     JsonNode pages = root.path("data").path("pages");
                     if (pages.isArray() && !pages.isEmpty()) {
+                        for (JsonNode pNode : pages) {
+                            if (pNode.path("page").asInt(1) == targetPage) {
+                                long pageCid = pNode.path("cid").asLong(0);
+                                if (pageCid > 0) return pageCid;
+                            }
+                        }
+                        if (targetPage > 0 && targetPage <= pages.size()) {
+                            long pageCid = pages.get(targetPage - 1).path("cid").asLong(0);
+                            if (pageCid > 0) return pageCid;
+                        }
                         long pageCid = pages.get(0).path("cid").asLong(0);
                         if (pageCid > 0) return pageCid;
                     }
+                    long cid = root.path("data").path("cid").asLong(0);
+                    if (cid > 0) return cid;
                 } else {
                     log.warn("B站获取视频详情返回错误: code={}, msg={}", code, root.path("message").asText());
                 }
@@ -335,6 +484,16 @@ public class BilibiliMvProvider implements MvSearchProvider {
                 if (plRoot != null && plRoot.path("code").asInt(-1) == 0) {
                     JsonNode dataList = plRoot.path("data");
                     if (dataList.isArray() && !dataList.isEmpty()) {
+                        for (JsonNode pNode : dataList) {
+                            if (pNode.path("page").asInt(1) == targetPage) {
+                                long cid = pNode.path("cid").asLong(0);
+                                if (cid > 0) return cid;
+                            }
+                        }
+                        if (targetPage > 0 && targetPage <= dataList.size()) {
+                            long cid = dataList.get(targetPage - 1).path("cid").asLong(0);
+                            if (cid > 0) return cid;
+                        }
                         long cid = dataList.get(0).path("cid").asLong(0);
                         if (cid > 0) return cid;
                     }
@@ -749,7 +908,12 @@ public class BilibiliMvProvider implements MvSearchProvider {
             String title = HTML_TAG.matcher(rawTitle).replaceAll("").trim();
             String author = item.path("author").asText("未知UP主");
             String pic = item.path("pic").asText(null);
-            if (pic != null && pic.startsWith("//")) pic = "https:" + pic;
+            // 规范化封面图片协议：补充缺失的 https 协议头，或将 http 协议升级为 https 防止混合内容拦截
+            if (pic != null && pic.startsWith("//")) {
+                pic = "https:" + pic;
+            } else if (pic != null && pic.startsWith("http://")) {
+                pic = "https://" + pic.substring(7);
+            }
             int durationMs = parseDuration(item.path("duration").asText("0"));
 
             items.add(new MvSearchItem(

@@ -33,7 +33,7 @@
           </svg>
         </div>
         <div v-if="biliAccount?.isLoggedIn" class="bili-profile-info">
-          <img v-if="biliAccount.face" :src="biliAccount.face" class="bili-avatar" alt="头像" />
+          <img v-if="biliAccount.face" :src="biliAccount.face" class="bili-avatar" alt="头像" referrerpolicy="no-referrer" />
           <div class="bili-text-wrap">
             <div class="bili-name-row">
               <strong class="bili-uname">{{ biliAccount.uname }}</strong>
@@ -152,7 +152,16 @@
       <div v-if="searchResults.length" class="mv-grid">
         <div v-for="item in searchResults" :key="item.provider + item.externalId" class="mv-card">
           <div class="mv-cover-box">
-            <img v-if="item.coverUrl" :src="item.coverUrl" class="mv-cover" alt="封面" loading="lazy" />
+            <!-- 增加 referrerpolicy 防止 B 站防盗链，绑定 @error 在图片失败时回退到占位图标避免黑屏 -->
+            <img
+              v-if="item.coverUrl && !isCoverFailed(item)"
+              :src="item.coverUrl"
+              class="mv-cover"
+              alt="封面"
+              loading="lazy"
+              referrerpolicy="no-referrer"
+              @error="onCoverError(item)"
+            />
             <div v-else class="mv-cover-fallback">
               <FileVideo2 :size="32" />
             </div>
@@ -172,15 +181,28 @@
             <a :href="item.sourceUrl" target="_blank" rel="noopener" class="source-link">
               原网页预览 ↗
             </a>
-            <button
-              class="download-action-btn"
-              :class="{ 'downloaded-btn': isDownloading(item) }"
-              :disabled="isDownloading(item)"
-              @click="submitDownload(item)"
-            >
-              <Check v-if="isDownloading(item)" :size="14" />
-              <span>{{ isDownloading(item) ? '已提交下载' : '下载并点播' }}</span>
-            </button>
+            <div class="card-action-group">
+              <!-- B 站视频支持选集下载，方便用户在合集中精准勾选目标集数 -->
+              <button
+                v-if="item.provider === 'BILIBILI'"
+                type="button"
+                class="parts-trigger-btn"
+                title="查看该合集包含的全部曲目并勾选批量下载"
+                @click="openPartsModal(item)"
+              >
+                <ListPlus :size="13" />
+                <span>选集下载</span>
+              </button>
+              <button
+                class="download-action-btn"
+                :class="{ 'downloaded-btn': isDownloading(item) }"
+                :disabled="isDownloading(item)"
+                @click="submitDownload(item)"
+              >
+                <Check v-if="isDownloading(item)" :size="14" />
+                <span>{{ isDownloading(item) ? '已提交' : (item.provider === 'BILIBILI' ? '整片点播' : '下载并点播') }}</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -456,6 +478,113 @@
         </div>
       </div>
     </div>
+    <!-- B 站视频分集/合集选集下载弹窗 / Bilibili Parts Selection Modal -->
+    <div v-if="partsModalOpen" class="modal-overlay" @click.self="partsModalOpen = false">
+      <div class="parts-modal-card">
+        <!-- 弹窗头部 -->
+        <div class="parts-modal-header">
+          <div class="parts-header-info">
+            <div class="parts-badge-title">
+              <span class="provider-pill bilibili">B站合集</span>
+              <h3 :title="currentMvItem?.title">{{ currentMvItem?.title }}</h3>
+            </div>
+            <p class="parts-subtitle">
+              UP主：{{ currentMvItem?.artist }} · 共 {{ partsList.length }} 集曲目 · 已勾选 {{ selectedPartPages.size }} 集
+            </p>
+          </div>
+          <button class="parts-close-btn" title="关闭" @click="partsModalOpen = false">
+            <X :size="18" />
+          </button>
+        </div>
+
+        <!-- 弹窗过滤与快捷操作栏 -->
+        <div class="parts-toolbar">
+          <div class="parts-filter-wrap">
+            <Search :size="14" class="filter-search-icon" />
+            <input
+              v-model.trim="partSearchText"
+              type="text"
+              placeholder="搜索曲目名、歌手或第几集 (如 晴天、周杰伦、01)..."
+              class="parts-filter-input"
+            />
+            <button v-if="partSearchText" class="parts-clear-btn" title="清空搜索" @click="partSearchText = ''">
+              <X :size="13" />
+            </button>
+          </div>
+          <div class="parts-shortcuts">
+            <button type="button" class="parts-btn-ghost" @click="selectAllParts">全选全部</button>
+            <button type="button" class="parts-btn-ghost" @click="clearPartSelection">清空已选</button>
+            <button type="button" class="parts-btn-ghost" @click="invertPartSelection">反选</button>
+            <button v-if="filteredParts.length >= 10" type="button" class="parts-btn-ghost" @click="selectTopNParts(10)">选前10集</button>
+            <button v-if="filteredParts.length >= 20" type="button" class="parts-btn-ghost" @click="selectTopNParts(20)">选前20集</button>
+          </div>
+        </div>
+
+        <!-- 全局偏好开关 -->
+        <div class="parts-options-row">
+          <label class="parts-opt-label">
+            <input v-model="partsAutoConvert" type="checkbox" />
+            <span>单音轨自动转双轨伴奏（启用 DSP / AI 人声分离）</span>
+          </label>
+          <label class="parts-opt-label">
+            <input v-model="partsAutoEnqueue" type="checkbox" />
+            <span>下载入库后自动加入点歌队列</span>
+          </label>
+        </div>
+
+        <!-- 分集列表展示区 -->
+        <div class="parts-list-body">
+          <div v-if="partsLoading" class="parts-loading-box">
+            <RefreshCw :size="24" class="spinning" />
+            <span>正在解析 B 站视频分集信息，请稍候…</span>
+          </div>
+          <div v-else-if="filteredParts.length === 0" class="parts-empty-box">
+            <span>未匹配到符合条件的分集曲目</span>
+          </div>
+          <div v-else class="parts-items-grid">
+            <div
+              v-for="p in filteredParts"
+              :key="p.page"
+              class="part-item-row"
+              :class="{ selected: selectedPartPages.has(p.page) }"
+              @click="togglePartSelection(p.page)"
+            >
+              <div class="part-check-col">
+                <input
+                  type="checkbox"
+                  :checked="selectedPartPages.has(p.page)"
+                  @click.stop="togglePartSelection(p.page)"
+                />
+              </div>
+              <span class="part-page-badge">P{{ p.page }}</span>
+              <div class="part-info-col">
+                <strong class="part-title-text" :title="p.part">{{ p.part }}</strong>
+              </div>
+              <span class="part-duration-text">{{ formatDuration(p.durationMs) }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 弹窗底部操作区 -->
+        <div class="parts-modal-footer">
+          <div class="parts-footer-left">
+            <span>已选中 <strong>{{ selectedPartPages.size }}</strong> / {{ partsList.length }} 集</span>
+          </div>
+          <div class="parts-footer-right">
+            <button type="button" class="btn-ghost" @click="partsModalOpen = false">取消</button>
+            <button
+              type="button"
+              class="btn-primary"
+              :disabled="selectedPartPages.size === 0 || partsSubmitting"
+              @click="submitBatchPartsDownload"
+            >
+              <RefreshCw v-if="partsSubmitting" :size="14" class="spinning" />
+              <span>{{ partsSubmitting ? '正在提交…' : ('批量下载所选 (' + selectedPartPages.size + '集)') }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </AdminLayout>
 </template>
 
@@ -464,7 +593,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import AdminLayout from './AdminLayout.vue'
 import { api } from '../../api/client'
 import {
-  Search, X, FileVideo2, RefreshCw, Check, RotateCcw, Trash2, AlertTriangle, QrCode, LogOut
+  Search, X, FileVideo2, RefreshCw, Check, RotateCcw, Trash2, AlertTriangle, QrCode, LogOut, ListPlus
 } from 'lucide-vue-next'
 
 const keyword = ref('')
@@ -472,6 +601,21 @@ const selectedProvider = ref('ALL')
 const searching = ref(false)
 const hasSearched = ref(false)
 const searchResults = ref([])
+
+// 记录封面图片加载失败的视频ID集合，加载失败时优雅降级为占位图标，杜绝页面渲染崩溃
+const failedCoverKeys = ref(new Set())
+
+const onCoverError = (item) => {
+  if (!item) return
+  const key = (item.provider || '') + '_' + (item.externalId || '')
+  failedCoverKeys.value.add(key)
+}
+
+const isCoverFailed = (item) => {
+  if (!item) return false
+  const key = (item.provider || '') + '_' + (item.externalId || '')
+  return failedCoverKeys.value.has(key)
+}
 const tasks = ref([])
 const currentTaskFilter = ref('ALL')
 const tasksRefreshing = ref(false)
@@ -518,6 +662,120 @@ const qrKey = ref('')
 const qrState = ref(86101)
 const qrMessage = ref('')
 let qrPollTimer = null
+
+// ===== B 站分P/合集选集下载状态与逻辑 =====
+const partsModalOpen = ref(false)
+const partsLoading = ref(false)
+const partsSubmitting = ref(false)
+const currentMvItem = ref(null)
+const partsList = ref([])
+const partSearchText = ref('')
+const selectedPartPages = ref(new Set())
+const partsAutoConvert = ref(true)
+const partsAutoEnqueue = ref(true)
+
+// 过滤后的分集列表（支持实时歌名/序号过滤）
+const filteredParts = computed(() => {
+  if (!partSearchText.value.trim()) return partsList.value
+  const kw = partSearchText.value.trim().toLowerCase()
+  return partsList.value.filter(p => {
+    const text = ('p' + p.page + ' ' + (p.part || '')).toLowerCase()
+    return text.includes(kw)
+  })
+})
+
+// 打开选集弹窗并拉取分P信息
+const openPartsModal = async (item) => {
+  currentMvItem.value = item
+  partsModalOpen.value = true
+  partsLoading.value = true
+  partsList.value = []
+  partSearchText.value = ''
+  selectedPartPages.value = new Set()
+  partsAutoConvert.value = Boolean(globalSettings.value.mv_auto_convert_dual_track)
+  partsAutoEnqueue.value = Boolean(globalSettings.value.mv_auto_enqueue)
+
+  try {
+    const res = await api.getMvParts(item.provider, item.externalId)
+    const list = res.parts || []
+    partsList.value = list
+    // 默认勾选前 1 集
+    if (list.length > 0) {
+      selectedPartPages.value.add(list[0].page)
+    }
+  } catch (e) {
+    alert('获取分集列表失败: ' + (e.message || '网络异常'))
+    partsModalOpen.value = false
+  } finally {
+    partsLoading.value = false
+  }
+}
+
+const togglePartSelection = (page) => {
+  if (selectedPartPages.value.has(page)) {
+    selectedPartPages.value.delete(page)
+  } else {
+    selectedPartPages.value.add(page)
+  }
+}
+
+const selectAllParts = () => {
+  filteredParts.value.forEach(p => selectedPartPages.value.add(p.page))
+}
+
+const clearPartSelection = () => {
+  selectedPartPages.value.clear()
+}
+
+const invertPartSelection = () => {
+  filteredParts.value.forEach(p => {
+    if (selectedPartPages.value.has(p.page)) {
+      selectedPartPages.value.delete(p.page)
+    } else {
+      selectedPartPages.value.add(p.page)
+    }
+  })
+}
+
+const selectTopNParts = (n) => {
+  selectedPartPages.value.clear()
+  filteredParts.value.slice(0, n).forEach(p => selectedPartPages.value.add(p.page))
+}
+
+// 批量提交勾选的分集下载任务
+const submitBatchPartsDownload = async () => {
+  if (!currentMvItem.value || selectedPartPages.value.size === 0) return
+  partsSubmitting.value = true
+
+  const selectedParts = partsList.value.filter(p => selectedPartPages.value.has(p.page))
+  const requests = selectedParts.map(p => {
+    const extId = currentMvItem.value.externalId + '?p=' + p.page + '&cid=' + p.cid
+    submittedExternalIds.value.add(extId)
+    return {
+      provider: currentMvItem.value.provider,
+      externalId: extId,
+      title: p.part || (currentMvItem.value.title + ' P' + p.page),
+      artist: currentMvItem.value.artist || '未知UP主',
+      coverUrl: p.coverUrl || currentMvItem.value.coverUrl,
+      resolution: currentMvItem.value.resolution || '1080p',
+      autoEnqueue: partsAutoEnqueue.value,
+      autoConvertDualTrack: partsAutoConvert.value,
+      durationMs: p.durationMs
+    }
+  })
+
+  try {
+    const createdTasks = await api.batchDownloadMv(requests)
+    submittedExternalIds.value.add(currentMvItem.value.externalId)
+    partsModalOpen.value = false
+    alert('成功提交 ' + createdTasks.length + ' 个分集下载任务！已加入下载合流队列。')
+    fetchTasks()
+  } catch (e) {
+    alert('批量提交分集下载失败: ' + (e.message || '网络异常'))
+  } finally {
+    partsSubmitting.value = false
+  }
+}
 
 const errorDetailOpen = ref(false)
 const selectedErrorTask = ref(null)
@@ -653,6 +911,7 @@ const handleSearch = async () => {
   if (!keyword.value) return
   searching.value = true
   hasSearched.value = true
+  failedCoverKeys.value.clear()
   try {
     const res = await api.searchMv(keyword.value, selectedProvider.value, 24)
     searchResults.value = res.items || []
@@ -2022,5 +2281,277 @@ onUnmounted(() => {
   padding: 12px 20px;
   border-top: 1px solid #f1f5f9;
   background: #fafbfc;
+}
+
+/* ===== B 站合集选集下载样式 ===== */
+.card-action-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.parts-trigger-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #0284c7;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+.parts-trigger-btn:hover {
+  background: #e0f2fe;
+  border-color: #38bdf8;
+  color: #0369a1;
+  transform: translateY(-1px);
+}
+.parts-modal-card {
+  width: 100%;
+  max-width: 760px;
+  max-height: 86vh;
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: modalScaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.parts-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 18px 24px 14px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #fafbfc;
+}
+.parts-header-info {
+  flex: 1;
+  min-width: 0;
+}
+.parts-badge-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.provider-pill.bilibili {
+  background: #0284c7;
+  color: #ffffff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+}
+.parts-badge-title h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.parts-subtitle {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #64748b;
+}
+.parts-close-btn {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  padding: 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.parts-close-btn:hover {
+  color: #0f172a;
+  background: #f1f5f9;
+}
+.parts-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 24px;
+  border-bottom: 1px solid #f1f5f9;
+  background: #ffffff;
+}
+.parts-filter-wrap {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+.filter-search-icon {
+  position: absolute;
+  left: 10px;
+  color: #94a3b8;
+}
+.parts-filter-input {
+  width: 100%;
+  padding: 7px 28px 7px 30px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #0f172a;
+  background: #f8fafc;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.parts-filter-input:focus {
+  border-color: #38bdf8;
+  background: #ffffff;
+}
+.parts-clear-btn {
+  position: absolute;
+  right: 8px;
+  background: none;
+  border: none;
+  color: #94a3b8;
+  padding: 2px;
+  cursor: pointer;
+}
+.parts-shortcuts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+.parts-btn-ghost {
+  padding: 5px 9px;
+  font-size: 11px;
+  color: #475569;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+.parts-btn-ghost:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+.parts-options-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 8px 24px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 11px;
+  color: #475569;
+}
+.parts-opt-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.parts-list-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 24px;
+  min-height: 240px;
+  max-height: 480px;
+  background: #ffffff;
+}
+.parts-loading-box, .parts-empty-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 60px 20px;
+  color: #94a3b8;
+  font-size: 13px;
+}
+.parts-items-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.part-item-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid #f1f5f9;
+  background: #f8fafc;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.part-item-row:hover {
+  background: #f0f9ff;
+  border-color: #bae6fd;
+}
+.part-item-row.selected {
+  background: #e0f2fe;
+  border-color: #7dd3fc;
+}
+.part-check-col {
+  display: flex;
+  align-items: center;
+}
+.part-check-col input {
+  cursor: pointer;
+}
+.part-page-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #bae6fd;
+  color: #0369a1;
+  min-width: 32px;
+  text-align: center;
+}
+.part-info-col {
+  flex: 1;
+  min-width: 0;
+}
+.part-title-text {
+  font-size: 13px;
+  color: #1e293b;
+  font-weight: 600;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.part-duration-text {
+  font-size: 12px;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.parts-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 24px;
+  border-top: 1px solid #e2e8f0;
+  background: #fafbfc;
+}
+.parts-footer-left {
+  font-size: 13px;
+  color: #475569;
+}
+.parts-footer-left strong {
+  color: #0284c7;
+  font-size: 15px;
+}
+.parts-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 </style>

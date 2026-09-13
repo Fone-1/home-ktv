@@ -262,4 +262,26 @@ class BilibiliMvProviderTest {
         assertThat(headers.get("Origin")).isEqualTo("https://www.bilibili.com");
         assertThat(headers.get("Cookie")).isEqualTo("buvid3=test;");
     }
+    @Test
+    void testParseExternalIdVariations() {
+        var t1 = BilibiliMvProvider.parseExternalId("BV1xx411c7mD");
+        assertThat(t1.bvid()).isEqualTo("BV1xx411c7mD");
+        assertThat(t1.page()).isEqualTo(1);
+        assertThat(t1.cid()).isEqualTo(0L);
+
+        var t2 = BilibiliMvProvider.parseExternalId("BV1xx411c7mD?p=5");
+        assertThat(t2.bvid()).isEqualTo("BV1xx411c7mD");
+        assertThat(t2.page()).isEqualTo(5);
+        assertThat(t2.cid()).isEqualTo(0L);
+
+        var t3 = BilibiliMvProvider.parseExternalId("BV1xx411c7mD?p=3&cid=889900");
+        assertThat(t3.bvid()).isEqualTo("BV1xx411c7mD");
+        assertThat(t3.page()).isEqualTo(3);
+        assertThat(t3.cid()).isEqualTo(889900L);
+
+        var t4 = BilibiliMvProvider.parseExternalId("BV1xx411c7mD:4:776655");
+        assertThat(t4.bvid()).isEqualTo("BV1xx411c7mD");
+        assertThat(t4.page()).isEqualTo(4);
+        assertThat(t4.cid()).isEqualTo(776655L);
+    }
 }

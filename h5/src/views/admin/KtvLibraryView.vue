@@ -53,7 +53,7 @@
               <span><input type="checkbox" :checked="applyFields.includes(field.key)" :disabled="isLocked(field.key) || !externalValue(field.key)" @change="toggleApplyField(field.key)" />{{ field.label }}<small v-if="isLocked(field.key)">已锁定</small></span>
               <span>{{ currentValue(field.key) || '—' }}</span><strong>{{ externalValue(field.key) || '—' }}</strong>
             </label>
-            <div v-if="selectedMatch.track.coverUrl" class="cover-preview"><img :src="selectedMatch.track.coverUrl" alt="" /><span>封面将在确认后下载到本地资源目录</span></div>
+            <div v-if="selectedMatch.track.coverUrl" class="cover-preview"><img :src="selectedMatch.track.coverUrl" alt="" referrerpolicy="no-referrer" /><span>封面将在确认后下载到本地资源目录</span></div>
           </div>
           <div v-else class="comparison-placeholder">选择左侧候选查看字段差异</div>
         </div>

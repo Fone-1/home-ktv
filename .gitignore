@@ -44,3 +44,7 @@ start-dev.bat
 start-h5.bat
 *.args
 
+
+# ===== Python =====
+__pycache__/
+*.pyc

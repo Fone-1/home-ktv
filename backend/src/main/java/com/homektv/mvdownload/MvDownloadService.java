@@ -16,6 +16,7 @@ import com.homektv.repo.MvDownloadTaskRepository;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.repo.SongRepository;
 import com.homektv.web.ApiException;
+import com.homektv.web.dto.BilibiliPartDto;
 import com.homektv.web.dto.MvDownloadSubmitRequest;
 import com.homektv.web.dto.MvDownloadTaskDto;
 import com.homektv.ws.WsBroadcaster;
@@ -178,6 +179,9 @@ public class MvDownloadService {
         task.setExternalId(request.externalId().trim());
         task.setCoverUrl(request.coverUrl());
         task.setResolution(request.resolution() != null ? request.resolution() : "1080p");
+        if (request.durationMs() != null && request.durationMs() > 0) {
+            task.setDurationMs(request.durationMs());
+        }
         task.setStatus("PENDING");
         task.setProgress(0);
         boolean autoConvert = request.autoConvertDualTrack() != null
@@ -198,6 +202,19 @@ public class MvDownloadService {
     /**
      * 获取所有下载任务
      */
+    /**
+     * 获取视频分集/分P列表（针对 B 站等合集资源）
+     */
+    public List<BilibiliPartDto> getParts(MvProvider provider, String externalId) {
+        if (provider == MvProvider.BILIBILI) {
+            MvSearchProvider p = providerMap.get(MvProvider.BILIBILI);
+            if (p instanceof BilibiliMvProvider biliProvider) {
+                return biliProvider.fetchParts(externalId, Duration.ofSeconds(10));
+            }
+        }
+        return List.of();
+    }
+
     public List<MvDownloadTaskDto> listTasks() {
         return taskRepo.findAllByOrderByCreatedAtDesc().stream().map(MvDownloadTaskDto::from).toList();
     }

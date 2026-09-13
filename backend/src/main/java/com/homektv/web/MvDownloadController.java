@@ -3,6 +3,7 @@ package com.homektv.web;
 import com.homektv.mvdownload.MvDownloadService;
 import com.homektv.mvdownload.MvProvider;
 import com.homektv.mvdownload.MvSearchItem;
+import com.homektv.web.dto.BilibiliPartDto;
 import com.homektv.web.dto.MvDownloadSubmitRequest;
 import com.homektv.web.dto.MvDownloadTaskDto;
 import org.springframework.web.bind.annotation.*;
@@ -49,6 +50,37 @@ public class MvDownloadController {
     /**
      * 提交下载任务
      */
+    /**
+     * 获取视频分集/分P列表（针对 B 站等合集资源）
+     */
+    @GetMapping("/parts")
+    public Map<String, Object> parts(
+            @RequestParam("provider") String providerStr,
+            @RequestParam("externalId") String externalId
+    ) {
+        MvProvider provider = MvProvider.parse(providerStr);
+        List<BilibiliPartDto> parts = downloadService.getParts(provider, externalId);
+        return Map.of(
+                "provider", provider.name(),
+                "externalId", externalId,
+                "totalParts", parts.size(),
+                "parts", parts
+        );
+    }
+
+    /**
+     * 批量提交下载任务（支持合集中勾选的多集同时下载）
+     */
+    @PostMapping("/batch-download")
+    public List<MvDownloadTaskDto> batchDownload(@RequestBody List<MvDownloadSubmitRequest> requests) {
+        if (requests == null || requests.isEmpty()) {
+            return List.of();
+        }
+        return requests.stream()
+                .map(downloadService::submitDownload)
+                .toList();
+    }
+
     @PostMapping("/download")
     public MvDownloadTaskDto download(@RequestBody MvDownloadSubmitRequest request) {
         return downloadService.submitDownload(request);

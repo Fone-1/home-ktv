@@ -379,6 +379,12 @@ public class BilibiliAuthService {
                         long mid = data.path("mid").asLong(0L);
                         String uname = data.path("uname").asText("B站用户");
                         String face = data.path("face").asText("");
+                        // 规范化用户头像协议为 https 防止混合内容拦截
+                        if (face != null && face.startsWith("//")) {
+                            face = "https:" + face;
+                        } else if (face != null && face.startsWith("http://")) {
+                            face = "https://" + face.substring(7);
+                        }
                         int vipStatus = data.path("vipStatus").asInt(0);
                         int vipType = data.path("vipType").asInt(0);
 

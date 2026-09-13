@@ -48,7 +48,7 @@
       <section class="action-sheet" role="dialog" aria-modal="true" aria-label="歌曲点播操作">
         <header class="sheet-head">
           <div class="sheet-cover">
-            <img v-if="song.coverUrl" :src="song.coverUrl" />
+            <img v-if="song.coverUrl" :src="song.coverUrl" referrerpolicy="no-referrer" />
             <Music2 v-else :size="24" />
           </div>
           <div class="sheet-info">

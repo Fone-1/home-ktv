@@ -91,7 +91,7 @@
           <main v-if="reviewSelected || reviewManual" class="review-editor">
             <div class="review-score"><span>当前候选：{{ reviewManual ? '人工填写' : providerText(reviewSelected.track.provider) }}</span><strong v-if="!reviewManual">{{ formatPercent(reviewSelected.score) }}</strong></div>
             <div class="cover-compare">
-              <div><span>当前封面</span><figure><img v-if="reviewCurrentCover" :src="reviewCurrentCover" alt="当前歌曲封面" /><Music2 v-else :size="24" /></figure></div>
+              <div><span>当前封面</span><figure><img v-if="reviewCurrentCover" :src="reviewCurrentCover" alt="当前歌曲封面" referrerpolicy="no-referrer" /><Music2 v-else :size="24" /></figure></div>
               <ArrowRight :size="18" />
               <div><span>候选封面</span><figure><img v-if="reviewCandidateCover" :src="reviewCandidateCover" alt="候选歌曲封面" referrerpolicy="no-referrer" /><Music2 v-else :size="24" /></figure></div>
             </div>
