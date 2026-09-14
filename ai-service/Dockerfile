@@ -17,8 +17,8 @@ COPY requirements.txt .
 # 默认安装 CPU / 跨平台兼容版 onnxruntime；若开启 GPU 构建参数则安装 onnxruntime-gpu
 ARG ONNX_PACKAGE=onnxruntime
 RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
-    numpy>=1.24.0,<3.0.0 \
-    ${ONNX_PACKAGE}
+    "numpy>=1.24.0,<3.0.0" \
+    "${ONNX_PACKAGE}"
 
 COPY . .
 
