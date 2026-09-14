@@ -26,7 +26,8 @@ public record AdminSongDto(
         int durationMs,
         int playCount,
         String filePath,
-        String importSource
+        String importSource,
+        boolean scraped
 ) {
     /**
      * 根据歌曲实体和文件实体构建管理后台歌曲 DTO，自动判断导入来源。
@@ -39,12 +40,26 @@ public record AdminSongDto(
      * @return 构建好的管理后台歌曲 DTO / the constructed admin song DTO
      */
     public static AdminSongDto from(Song song, SongFile file) {
+        return from(song, file, false);
+    }
+
+    /**
+     * 根据歌曲实体、文件实体和刮削状态构建管理后台歌曲 DTO。
+     *
+     * Builds an admin song DTO from song entity, file entity, and scrape status.
+     *
+     * @param song 歌曲实体 / the song entity
+     * @param file 歌曲文件实体，可为 null / the song file entity, nullable
+     * @param scraped 是否已刮削 / whether the song has been scraped
+     * @return 构建好的管理后台歌曲 DTO / the constructed admin song DTO
+     */
+    public static AdminSongDto from(Song song, SongFile file, boolean scraped) {
         String source = file == null || file.getSourcePath() == null
                 ? "UNKNOWN"
                 : file.isTranscodeRequired() ? "TRANSCODED" : "COPIED";
         return new AdminSongDto(song.getId(), song.getTitle(), song.getArtist(), song.getAlbum(), song.getReleaseDate(),
                 song.getAliases(), song.getCoverPath(), song.getMetadataLocks(), song.getLanguage(), song.getArtistGender(), song.getTags(),
                 song.getMediaType(), song.getLyricType(), song.getDurationMs(), song.getPlayCount(),
-                file == null ? null : file.getFilePath(), source);
+                file == null ? null : file.getFilePath(), source, scraped);
     }
 }

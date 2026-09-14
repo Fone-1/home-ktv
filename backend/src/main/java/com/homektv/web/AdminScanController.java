@@ -258,6 +258,7 @@ public class AdminScanController {
      * @param keyword search keyword
      * @param type song type filter
      * @param source source filter
+     * @param scrapeStatus scrape status filter (SCRAPED, UNSCRAPED, or empty)
      * @param page page number (0-based)
      * @param size page size
      * @return paginated song list
@@ -266,9 +267,10 @@ public class AdminScanController {
     public Map<String, Object> listSongs(@RequestParam(defaultValue = "") String keyword,
                                          @RequestParam(defaultValue = "") String type,
                                          @RequestParam(defaultValue = "") String source,
+                                         @RequestParam(defaultValue = "") String scrapeStatus,
                                          @RequestParam(defaultValue = "0") int page,
                                          @RequestParam(defaultValue = "20") int size) {
-        Page<AdminSongDto> p = adminService.listAdminSongs(keyword, type, source, page, size);
+        Page<AdminSongDto> p = adminService.listAdminSongs(keyword, type, source, scrapeStatus, page, size);
         return Map.of(
                 "content", p.getContent(),
                 "total", p.getTotalElements(),

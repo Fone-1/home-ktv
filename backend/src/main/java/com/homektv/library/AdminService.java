@@ -25,9 +25,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 管理后台服务（P2.1-P2.5，详设§8）。
@@ -85,29 +88,52 @@ public class AdminService {
 
     @Transactional(readOnly = true)
     public Page<AdminSongDto> listAdminSongs(String keyword, String type, String source, int page, int size) {
+        return listAdminSongs(keyword, type, source, "", page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<AdminSongDto> listAdminSongs(String keyword, String type, String source, String scrapeStatus, int page, int size) {
         int safeSize = Math.max(1, Math.min(size, 200));
         int safePage = Math.max(0, page);
         Pageable pageable = PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "createdAt"));
         Page<Song> songs = songRepo.searchAdminSongs(normalizeFilter(keyword), normalizeFilter(type),
-                normalizeFilter(source), pageable);
+                normalizeFilter(source), normalizeScrapeStatus(scrapeStatus), pageable);
         List<Long> songIds = songs.getContent().stream().map(Song::getId).toList();
         Map<Long, SongFile> primaryFiles = new LinkedHashMap<>();
+        Set<Long> scrapedSongIds = new HashSet<>();
         if (!songIds.isEmpty()) {
             fileRepo.findBySongIdInAndValidTrueOrderByPriorityDesc(songIds)
                     .forEach(file -> primaryFiles.putIfAbsent(file.getSongId(), file));
+            scrapedSongIds = findScrapedSongIds(songIds);
         }
-        return songs.map(song -> AdminSongDto.from(song, primaryFiles.get(song.getId())));
+        final Set<Long> finalScrapedIds = scrapedSongIds;
+        return songs.map(song -> AdminSongDto.from(song, primaryFiles.get(song.getId()), finalScrapedIds.contains(song.getId())));
     }
 
     @Transactional(readOnly = true)
     public AdminSongDto getAdminSong(Long id) {
         Song song = songRepo.findById(id).orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在"));
         SongFile file = fileRepo.findBySongIdAndValidTrueOrderByPriorityDesc(id).stream().findFirst().orElse(null);
-        return AdminSongDto.from(song, file);
+        boolean scraped = !findScrapedSongIds(List.of(id)).isEmpty();
+        return AdminSongDto.from(song, file, scraped);
+    }
+
+    private Set<Long> findScrapedSongIds(Collection<Long> songIds) {
+        if (songIds == null || songIds.isEmpty()) return Set.of();
+        Set<Long> set = new HashSet<>(songRepo.findAppliedMatchSongIds(songIds));
+        set.addAll(songRepo.findScrapedItemSongIds(songIds));
+        return set;
     }
 
     private static String normalizeFilter(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static String normalizeScrapeStatus(String value) {
+        if (value == null) return "";
+        String s = value.trim().toUpperCase(Locale.ROOT);
+        if ("SCRAPED".equals(s) || "UNSCRAPED".equals(s)) return s;
+        return "";
     }
 
     /** 编辑曲目（P2.3）：改元数据后重算拼音；可粘贴歌词 */

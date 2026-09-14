@@ -6,14 +6,15 @@
       <label><span>关键词</span><input v-model.trim="filters.keyword" placeholder="歌名或歌手" @keyup.enter="search" /></label>
       <label><span>版本类型</span><span class="select-control"><select v-model="filters.type" @change="search"><option value="">全部类型</option><option value="KTV_VIDEO">KTV版</option><option value="MV">MV版</option><option value="AUDIO">音频版</option><option value="unrecognized">未识别</option></select><ChevronDown :size="15" aria-hidden="true" /></span></label>
       <label><span>入库来源</span><span class="select-control"><select v-model="filters.source" @change="search"><option value="">全部来源</option><option value="COPIED">自动直拷</option><option value="TRANSCODED">转码入库</option><option value="UNKNOWN">历史曲库</option></select><ChevronDown :size="15" aria-hidden="true" /></span></label>
+      <label><span>刮削状态</span><span class="select-control"><select v-model="filters.scrapeStatus" @change="search"><option value="">全部状态</option><option value="SCRAPED">已刮削</option><option value="UNSCRAPED">未刮削</option></select><ChevronDown :size="15" aria-hidden="true" /></span></label>
       <div class="filter-actions"><button class="secondary" @click="reset">重置</button><button class="primary" @click="search">查询</button><button class="secondary scrape-entry" @click="goScrape()"><Tags :size="15" />元数据刮削</button></div>
     </section>
     <!-- 歌曲列表表格 / Song List Table -->
     <section class="table-panel">
       <div class="toolbar"><span>共 {{ total }} 首可点歌曲</span><div class="toolbar-actions"><button class="secondary scrape-batch" :disabled="!selected.size" @click="goScrape([...selected])"><Tags :size="14" />刮削已选（{{ selected.size }}）</button><button class="danger" :disabled="!selected.size" @click="deleteSelected">批量删除（{{ selected.size }}）</button></div></div>
-      <div class="table-scroll"><table><thead><tr><th><input type="checkbox" :checked="allSelected" @change="toggleAll" /></th><th>歌名</th><th>歌手</th><th>类型</th><th>语种 / 标签</th><th>KTV 文件</th><th>来源</th><th>点唱</th><th class="action-cell">操作</th></tr></thead><tbody>
-        <tr v-for="song in songs" :key="song.id"><td><input type="checkbox" :checked="selected.has(song.id)" @change="toggle(song.id)" /></td><td><strong>{{ song.title }}</strong></td><td>{{ song.artist }}</td><td><span class="status" :class="typeClass(song.mediaType)">{{ typeText(song.mediaType) }}</span></td><td>{{ song.language || '—' }}<small>{{ (song.tags || []).join(' / ') || '无标签' }}</small></td><td class="path">{{ song.filePath || '—' }}</td><td>{{ sourceText(song.importSource) }}</td><td>{{ song.playCount || 0 }}</td><td class="action-cell"><div class="row-actions"><button class="link playlist-link" title="加入已有歌单" @click="openPlaylistPicker(song)"><ListPlus :size="14" />歌单</button><button class="link match-link" title="搜索、筛选并审核平台元数据" @click="goScrape([song.id],true)"><Tags :size="14" />元数据刮削</button><button class="link danger-text" title="删除歌曲" @click="deleteOne(song)"><Trash2 :size="14" />删除</button></div></td></tr>
-        <tr v-if="!songs.length"><td colspan="9" class="empty">暂无符合条件的 KTV 曲库歌曲</td></tr>
+      <div class="table-scroll"><table><thead><tr><th><input type="checkbox" :checked="allSelected" @change="toggleAll" /></th><th>歌名</th><th>歌手</th><th>类型</th><th>刮削状态</th><th>语种 / 标签</th><th>KTV 文件</th><th>来源</th><th>点唱</th><th class="action-cell">操作</th></tr></thead><tbody>
+        <tr v-for="song in songs" :key="song.id"><td><input type="checkbox" :checked="selected.has(song.id)" @change="toggle(song.id)" /></td><td><strong>{{ song.title }}</strong></td><td>{{ song.artist }}</td><td><span class="status" :class="typeClass(song.mediaType)">{{ typeText(song.mediaType) }}</span></td><td><span class="status" :class="song.scraped ? 'green' : 'neutral'">{{ song.scraped ? '已刮削' : '未刮削' }}</span></td><td>{{ song.language || '—' }}<small>{{ (song.tags || []).join(' / ') || '无标签' }}</small></td><td class="path">{{ song.filePath || '—' }}</td><td>{{ sourceText(song.importSource) }}</td><td>{{ song.playCount || 0 }}</td><td class="action-cell"><div class="row-actions"><button class="link playlist-link" title="加入已有歌单" @click="openPlaylistPicker(song)"><ListPlus :size="14" />歌单</button><button class="link match-link" title="搜索、筛选并审核平台元数据" @click="goScrape([song.id],true)"><Tags :size="14" />元数据刮削</button><button class="link danger-text" title="删除歌曲" @click="deleteOne(song)"><Trash2 :size="14" />删除</button></div></td></tr>
+        <tr v-if="!songs.length"><td colspan="10" class="empty">暂无符合条件的 KTV 曲库歌曲</td></tr>
       </tbody></table></div>
       <div class="pager"><span>第 {{ page + 1 }} / {{ totalPages || 1 }} 页</span><div><button class="secondary" :disabled="page===0" @click="go(page-1)">上一页</button><button class="secondary" :disabled="page>=totalPages-1" @click="go(page+1)">下一页</button></div></div>
     </section>
@@ -79,20 +80,20 @@
  * supports filtering, editing, and deleting songs.
  */
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { Check, ChevronDown, ListPlus, RefreshCw, Tags, Trash2, X } from 'lucide-vue-next'
 import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
 import { alertDialog, confirmDialog } from '../../composables/useDialog'
 /** 歌曲列表、总数、当前页、总页数、已选集合 / Song list, total, page, total pages, selected set */
 const songs=ref([]),total=ref(0),page=ref(0),totalPages=ref(1),selected=ref(new Set())
-const router=useRouter()
+const route=useRoute(),router=useRouter()
 const matchingSong=ref(null),matches=ref([]),selectedMatch=ref(null),matchLoading=ref(false),applyingMatch=ref(false),applyFields=ref([])
 const scrapeOpen=ref(false),scrapeLoading=ref(false),scrapeApplying=ref(false),scrapeResults=ref([]),scrapeApplyIds=ref(new Set())
 const playlistPickerOpen=ref(false),playlistPickerSong=ref(null),playlistOptions=ref([]),playlistLoading=ref(false),playlistAddingId=ref(null)
 const metadataFields=[{key:'title',label:'歌名'},{key:'artist',label:'歌手'},{key:'album',label:'专辑'},{key:'releaseDate',label:'发行时间'},{key:'aliases',label:'别名'},{key:'cover',label:'封面'}]
 /** 筛选条件 / Filter criteria */
-const filters=reactive({keyword:'',type:'',source:''})
+const filters=reactive({keyword:'',type:'',source:'',scrapeStatus:''})
 /** 是否全选 / Whether all items are selected */
 const allSelected=computed(()=>songs.value.length>0&&songs.value.every(s=>selected.value.has(s.id)))
 /**
@@ -105,7 +106,7 @@ async function load(){const r=await api.adminSongs({...filters,page:page.value,s
 /** 搜索：重置到第一页并加载 / Search: reset to first page and load */
 function search(){page.value=0;load()}
 /** 重置筛选条件并搜索 / Reset filter criteria and search */
-function reset(){Object.assign(filters,{keyword:'',type:'',source:''});search()}
+function reset(){Object.assign(filters,{keyword:'',type:'',source:'',scrapeStatus:''});search()}
 function goScrape(ids=[],review=false){router.push({name:'admin-metadata-scrape',query:ids.length?{songIds:ids.join(','),...(review?{review:'1'}:{})}:undefined})}
 async function openPlaylistPicker(song){playlistPickerSong.value=song;playlistPickerOpen.value=true;playlistLoading.value=true;try{playlistOptions.value=await api.adminAiPlaylists()}catch(e){await alertDialog(e.message||'歌单加载失败')}finally{playlistLoading.value=false}}
 function closePlaylistPicker(){if(!playlistAddingId.value)playlistPickerOpen.value=false}
@@ -187,7 +188,10 @@ function typeText(v){return{KTV_VIDEO:'KTV版',MV:'MV版',AUDIO:'音频版'}[v]|
 function typeClass(v){return v==='KTV_VIDEO'?'green':v==='MV'?'blue':'neutral'}
 /** 导入来源文本映射 / Import source text mapping */
 function sourceText(v){return{COPIED:'扫描直入',TRANSCODED:'转码入库',UNKNOWN:'历史曲库'}[v]||'历史曲库'}
-onMounted(load)
+onMounted(()=>{
+  if(route.query.scrapeStatus)filters.scrapeStatus=String(route.query.scrapeStatus)
+  load()
+})
 </script>
 
 <style scoped>

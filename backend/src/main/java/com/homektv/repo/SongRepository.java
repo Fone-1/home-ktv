@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -56,9 +57,25 @@ public interface SongRepository extends JpaRepository<Song, Long> {
                     SELECT file.id FROM SongFile file
                     WHERE file.songId = song.id AND file.valid = true
                       AND file.sourcePath IS NOT NULL AND file.transcodeRequired = true)))
+              AND (:scrapeStatus = ''
+                OR (:scrapeStatus = 'SCRAPED' AND (
+                    EXISTS (SELECT m.id FROM SongExternalMatch m WHERE m.songId = song.id AND m.status = 'APPLIED')
+                    OR EXISTS (SELECT item.id FROM MusicMetadataScrapeItem item WHERE item.songId = song.id AND item.status IN ('AUTO_APPLIED', 'REVIEW', 'MANUAL_APPLIED', 'FAILED'))
+                ))
+                OR (:scrapeStatus = 'UNSCRAPED' AND NOT (
+                    EXISTS (SELECT m.id FROM SongExternalMatch m WHERE m.songId = song.id AND m.status = 'APPLIED')
+                    OR EXISTS (SELECT item.id FROM MusicMetadataScrapeItem item WHERE item.songId = song.id AND item.status IN ('AUTO_APPLIED', 'REVIEW', 'MANUAL_APPLIED', 'FAILED'))
+                )))
             """)
     Page<Song> searchAdminSongs(@Param("keyword") String keyword,
                                 @Param("type") String type,
                                 @Param("source") String source,
+                                @Param("scrapeStatus") String scrapeStatus,
                                 Pageable pageable);
+
+    @Query("SELECT DISTINCT m.songId FROM SongExternalMatch m WHERE m.songId IN :songIds AND m.status = 'APPLIED'")
+    List<Long> findAppliedMatchSongIds(@Param("songIds") Collection<Long> songIds);
+
+    @Query("SELECT DISTINCT item.songId FROM MusicMetadataScrapeItem item WHERE item.songId IN :songIds AND item.status IN ('AUTO_APPLIED', 'REVIEW', 'MANUAL_APPLIED', 'FAILED')")
+    List<Long> findScrapedItemSongIds(@Param("songIds") Collection<Long> songIds);
 }
