@@ -1,0 +1,30 @@
+# ==============================================================================
+# Home KTV - NVIDIA 独显专属硬件加速 Compose 覆盖文件
+# 用法：docker compose -f docker-compose.fnos.yml -f docker-compose.nvidia.yml up -d
+#       或 docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d
+# 前置条件：宿主机已安装 NVIDIA 显卡驱动与 nvidia-container-toolkit
+# ==============================================================================
+services:
+  ktv:
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,video,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  ai-service:
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

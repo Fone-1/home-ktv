@@ -1,6 +1,14 @@
 services:
   ktv:
-    # Optional Intel/AMD GPU device passthrough for hardware video acceleration.
-    # 可选的 Intel/AMD GPU 设备透传，用于硬件视频加速。
     devices:
       - /dev/dri:/dev/dri
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,video,utility
+
+  ai-service:
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility

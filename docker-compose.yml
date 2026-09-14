@@ -44,6 +44,8 @@ services:
       KTV_SOURCE_LIBRARY_PATH: /source-music
       KTV_LIBRARY_PATH: /music
       KTV_DATA_PATH: /data
+      KTV_DUAL_TRACK_ENGINE: ${KTV_DUAL_TRACK_ENGINE:-REMOTE_AI}
+      KTV_DUAL_TRACK_REMOTE_URL: ${KTV_DUAL_TRACK_REMOTE_URL:-http://ai-service:8900/api/separate}
       KTV_DISCOVERY_ENABLED: ${KTV_DISCOVERY_ENABLED:-true}
       # The TV client scans this UDP port to discover the server.
       # 电视端通过扫描此 UDP 端口发现服务端。
@@ -83,6 +85,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      ai-service:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${SERVER_PORT}/api/health | grep -q '\"status\":\"UP\"'"]
       interval: 10s
@@ -91,3 +95,26 @@ services:
       start_period: 30s
     restart: unless-stopped
     stop_grace_period: 30s
+
+  # UVR-MDX-Net AI Vocal Separation Service (Scheme B)
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+      args:
+        BASE_REGISTRY: ${KTV_IMAGE_REGISTRY:-docker.m.daocloud.io}
+    image: ${KTV_AI_IMAGE:-home-ktv-ai:latest}
+    container_name: ${KTV_AI_CONTAINER_NAME:-ktv-ai}
+    environment:
+      UVR_PORT: 8900
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "${KTV_AI_PORT:-8900}:8900/tcp"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8900/api/health')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    stop_grace_period: 15s

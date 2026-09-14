@@ -124,8 +124,8 @@
         <label>
           伴奏分离模式
           <select v-model="convertForm.mode">
-            <option value="DSP">极速声学消音 (DSP, 约2~5秒, 推荐)</option>
-            <option value="AI">高保真深度学习 (AI / 远程接口)</option>
+            <option value="AI">UVR-MDX-Net 深度学习 AI (方案B: 母带级纯净伴奏, 默认)</option>
+            <option value="DSP">极速声学消音 (DSP, 约2~5秒秒级转换)</option>
           </select>
         </label>
         <label>
@@ -154,8 +154,8 @@
         <label>
           分离算法
           <select v-model="batchForm.mode">
-            <option value="DSP">极速声学消音 (DSP, 推荐)</option>
-            <option value="AI">深度学习 AI 分离</option>
+            <option value="AI">UVR-MDX-Net 深度学习 AI (方案B: 默认推荐)</option>
+            <option value="DSP">极速声学消音 (DSP 毫秒级重构)</option>
           </select>
         </label>
         <label>
@@ -235,10 +235,10 @@ const convertingSongs = ref(new Set())
 const convertOpen = ref(false)
 const convertingSong = ref(null)
 const converting = ref(false)
-const convertForm = reactive({ mode: 'DSP', backupOriginal: false, outputFormat: 'mp4' })
+const convertForm = reactive({ mode: 'AI', backupOriginal: false, outputFormat: 'mp4' })
 const batchOpen = ref(false)
 const batchSubmitting = ref(false)
-const batchForm = reactive({ mode: 'DSP', concurrency: 2 })
+const batchForm = reactive({ mode: 'AI', concurrency: 1 })
 const batchProgress = ref(null)
 let batchTimer = null
 /** 是否全选当前页 / Whether all songs on current page are selected */

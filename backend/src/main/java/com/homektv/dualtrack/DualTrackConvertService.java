@@ -147,7 +147,7 @@ public class DualTrackConvertService {
                                 lastMessage = "正在处理: " + title;
                                 broadcastCurrentProgress();
 
-                                doConvert(sId, mode, policy.backupOriginal(), "mkv");
+                                doConvert(sId, mode, policy.backupOriginal(), null);
                             } finally {
                                 activeSongIds.remove(sId);
                             }
@@ -226,12 +226,15 @@ public class DualTrackConvertService {
 
         try {
             if ("REMOTE_AI".equalsIgnoreCase(effectiveMode) || "LOCAL_AI".equalsIgnoreCase(effectiveMode) || "AI".equalsIgnoreCase(effectiveMode)) {
-                // 深度学习 AI 分离模式
-                Path tempAccompAudio = Files.createTempFile("accomp-", ".aac");
+                // 方案B：UVR-MDX-Net 深度学习 AI 分离模式
+                Path tempAccompAudio = Files.createTempFile("accomp-", ".wav");
                 try {
                     remoteAiEngine.separateAccompanimentWithConfig(
                             inputPath, tempAccompAudio, bitrate, policy.remoteUrl(), policy.remoteToken());
                     remuxer.remuxWithAccompanimentAudio(inputPath, tempAccompAudio, tempOutput, bitrate);
+                } catch (Exception e) {
+                    log.warn("AI 伴奏分离异常，尝试自动平滑降级至 DSP 声学消音: songId={}, error={}", songId, e.getMessage());
+                    remuxer.remuxDsp(inputPath, tempOutput, bitrate);
                 } finally {
                     try { Files.deleteIfExists(tempAccompAudio); } catch (Exception ignored) {}
                 }

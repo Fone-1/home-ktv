@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>伴奏分离 · UVR-MDX-NET-Inst_HQ_3</title>
+<style>
+  /* 复古网页风：深色纯色背景 + 最原始 3D 立体按钮/框框（outset/inset 边框） */
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body {
+    font-family:"Microsoft YaHei","Segoe UI",sans-serif;
+    background:#23272b; color:#e6e6e6; min-height:100vh; display:flex;
+    align-items:center; justify-content:center; padding:24px;
+  }
+  .card {
+    width:100%; max-width:640px; background:#eef1f5;
+    border:3px outset #d3d9e3; padding:24px 26px; color:#15171a;
+  }
+  h1 {
+    font-size:20px; margin-bottom:8px; display:flex; align-items:center; gap:10px;
+    color:#15171a; border-bottom:2px inset #b9c2cf; padding-bottom:12px;
+  }
+  h1 .badge {
+    font-size:11px; padding:2px 9px; border:2px outset #3a6fb0; color:#fff; font-weight:600;
+    background:#337ab7;
+  }
+  .sub { color:#4a4f57; font-size:12.5px; margin-bottom:18px; }
+  .drop {
+    border:2px dashed #9aa7b8; padding:36px 16px; text-align:center; cursor:pointer;
+    background:#ffffff; color:#20242a;
+  }
+  .drop:hover, .drop.over { border-color:#3f7ec9; background:#f5f8fc; }
+  .drop b { font-size:15px; display:block; margin-bottom:6px; color:#15171a; }
+  .drop span { color:#6a7078; font-size:12.5px; }
+  .fileinfo {
+    margin-top:14px; border:2px inset #c6cdd8; background:#ffffff;
+    padding:11px 13px; font-size:13px; color:#20242a;
+  }
+  .barwrap { margin-top:14px; display:none; }
+  .bar {
+    height:16px; border:2px inset #c6cdd8; background:#ffffff; overflow:hidden;
+  }
+  .bar>div { height:100%; width:0%; background:#3f7ec9; transition:width .2s; }
+  .status { margin-top:9px; font-size:12.5px; color:#33383f; }
+  .results { display:none; margin-top:18px; }
+  .results h2 { font-size:14px; margin-bottom:10px; color:#15171a; }
+  .row { display:flex; gap:10px; }
+  .btn {
+    flex:1; padding:9px 6px; cursor:pointer; font-size:14px; font-weight:600;
+    font-family:inherit; color:#1a1713; border:2px outset #b8bcc2;
+    background:#dddfe3; text-shadow:none;
+  }
+  .btn:active { border:2px inset #b8bcc2; }
+  .btn.inst { background:#4a7bc2; color:#fff; border:2px outset #6a9ad8; }
+  .btn.inst:active { border:2px inset #2f5b96; }
+  .btn.voc  { background:#7a63b5; color:#fff; border:2px outset #9c87cf; }
+  .btn.voc:active { border:2px inset #5e47a0; }
+  .btn.gray { background:#c6c9cf; color:#1a1713; }
+  .btn.video { background:#3f7ec9; color:#fff; border:2px outset #6a9ad8; }
+  .btn.video:active { border:2px inset #2f5b96; }
+  .btn:disabled { opacity:.5; cursor:not-allowed; }
+  .err {
+    color:#b00020; font-size:13px; margin-top:10px; display:none;
+    border:2px inset #c9a0a0; background:#ffecec; padding:8px 10px;
+  }
+  .vismode {
+    margin-top:12px; border:2px inset #c6cdd8; background:#ffffff;
+    padding:10px 12px; display:none;
+  }
+  .vismode .lbl { font-weight:600; color:#15171a; font-size:12.5px; margin-bottom:6px; }
+  .vismode label { display:block; margin:4px 0; font-size:13px; color:#33383f; cursor:pointer; }
+  .vismode input { margin-right:5px; }
+  .vismode .vhint { margin-top:6px; font-size:11px; color:#6a7078; }
+  .vprev { margin-top:16px; display:none; }
+  .vprev h2 { font-size:14px; margin-bottom:8px; color:#15171a; }
+  .vtabs { display:flex; gap:8px; margin-bottom:8px; }
+  .vtab {
+    flex:1; padding:6px; cursor:pointer; font-size:13px; font-family:inherit;
+    background:#c6c9cf; color:#1a1713; border:2px outset #b8bcc2; text-shadow:none;
+  }
+  .vtab.on { background:#4a7bc2; color:#fff; border:2px inset #6a9ad8; }
+  .vprev video { width:100%; background:#000; border:2px inset #c6cdd8; display:block; }
+  .tip { margin-top:20px; padding-top:12px; border-top:2px inset #c6cdd8; font-size:11px; color:#6a7078; line-height:1.8; }
+  .dbg { margin-top:14px; border:2px inset #c6cdd8; background:#ffffff; padding:10px 12px; }
+  .dbg summary { cursor:pointer; font-size:12.5px; color:#33383f; user-select:none; }
+  .dbgrow { display:flex; gap:8px; margin-top:10px; }
+  .dbgrow input {
+    flex:1; background:#f0f0f0; color:#111; border:2px inset #7f848b; padding:7px 10px; font-size:12.5px; font-family:inherit; outline:none;
+  }
+  .dbgrow input:focus { border:2px inset #5a9bdd; }
+  .dbgGo {
+    background:#dddfe3; border:2px outset #b8bcc2; color:#1a1713; padding:0 16px;
+    cursor:pointer; font-size:13px; font-weight:600; font-family:inherit;
+  }
+  .dbgGo:active { border:2px inset #b8bcc2; }
+  .dbghint { margin-top:8px; font-size:11px; color:#6a7078; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>伴奏分离 <span class="badge">Inst HQ 3</span></h1>
+  <div class="sub">基于 UVR-MDX-NET-Inst_HQ_3 模型，本地 CPU 处理。拖入音频即可提取伴奏与人声；拖入视频可提取并合并伴奏音轨。</div>
+
+  <div class="drop" id="drop">
+    <b>拖入音频或视频文件，或点击选择</b>
+    <span>音频：WAV / MP3 / FLAC / M4A 等；视频：MP4 / MKV / AVI / MOV / FLV / WEBM 等（自带 ffmpeg，无需另外安装）</span>
+  </div>
+  <input type="file" id="file" hidden accept="audio/*,.wav,video/*,.mp4,.mkv,.avi,.mov,.wmv,.flv,.webm,.m4v,.ts,.m2ts,.3gp,.ogv">
+
+  <div class="vismode" id="vismode">
+    <div class="lbl">已识别为视频文件 — 视频音轨处理方式</div>
+    <label><input type="radio" name="vidmode" value="add_track" checked> 添加新音轨（保留原唱人声，另加一条伴奏音轨）</label>
+    <label><input type="radio" name="vidmode" value="replace"> 替换原音轨（只保留伴奏，覆盖人声）</label>
+    <div class="vhint">分离出的伴奏音轨将按原视频音轨格式重新编码后合并进视频。</div>
+  </div>
+
+  <div class="fileinfo" id="fileinfo" style="display:none"></div>
+
+  <div class="barwrap" id="barwrap">
+    <div class="bar"><div id="barfill"></div></div>
+    <div class="status" id="status"></div>
+  </div>
+  <div class="err" id="err"></div>
+
+  <div class="results" id="results">
+    <h2>分离完成，选择下载：</h2>
+    <div class="row">
+      <button class="btn inst" id="dlInst">下载伴奏</button>
+      <button class="btn voc" id="dlVoc">下载人声</button>
+      <button class="btn video" id="dlVideo" style="display:none">下载伴奏视频</button>
+      <button class="btn gray" id="again">再处理一个</button>
+    </div>
+  </div>
+
+  <div class="vprev" id="vprev">
+    <h2>视频预览（切换Tab对比原唱 / 伴奏）</h2>
+    <div class="vtabs">
+      <button class="vtab on" id="tabOrig" type="button">原唱视频</button>
+      <button class="vtab" id="tabAcc" type="button">伴奏视频</button>
+    </div>
+    <video id="vOrig" controls playsinline></video>
+    <video id="vAcc" controls playsinline style="display:none"></video>
+  </div>
+
+  <details class="dbg" id="dbg" style="display:none">
+    <summary>调试 / 本地路径导入</summary>
+    <div class="dbgrow">
+      <input type="text" id="dbgPath" placeholder="输入服务器本地音频路径，如 H:\MTV\歌曲.wav">
+      <button id="dbgGo" type="button">开始分离</button>
+    </div>
+    <div class="dbghint">供调试与自动化测试：直接指定服务器本地文件路径创建任务，无需经浏览器上传。</div>
+  </details>
+
+  <div class="tip">
+    使用说明：① 双击文件夹内的「启动.vbs」自动打开本页（或双击 start.bat）；② 拖入歌曲；③ 跟随进度条观察处理；④ 下载伴奏/人声（16-bit WAV）。
+    注意：请务必通过「启动.vbs / start.bat」打开本页（地址栏为 http://127.0.0.1:8900/），不要直接双击 index.html 文件——那样页面会因浏览器安全限制无法与本地服务通信。
+    单乐曲 CPU 处理约耗时数分钟，属正常现象。所有文件仅在本地处理，不会上传任何服务器。
+  </div>
+</div>
+
+<script>
+(function(){
+  // 全局错误/未处理 Promise 显示到页面，方便排查“页面无反应”
+  window.onerror=function(msg,src,line,col){
+    try{ showErr('页面脚本错误：'+msg+'（'+src+' '+line+':'+col+'）'); }catch(e){}
+    return false;
+  };
+  window.addEventListener('unhandledrejection',function(e){
+    try{ showErr('异步请求失败：'+(e&&e.reason&&e.reason.message?e.reason.message:e.reason)); }catch(x){}
+  });
+
+  var drop=document.getElementById('drop'), file=document.getElementById('file');
+  var fileinfo=document.getElementById('fileinfo'), err=document.getElementById('err');
+  var barwrap=document.getElementById('barwrap'), barfill=document.getElementById('barfill');
+  var status=document.getElementById('status'), results=document.getElementById('results');
+  var dlInst=document.getElementById('dlInst'), dlVoc=document.getElementById('dlVoc'), again=document.getElementById('again');
+  var vismode=document.getElementById('vismode'), dlVideo=document.getElementById('dlVideo');
+  var vPrev=document.getElementById('vprev'), tabOrig=document.getElementById('tabOrig'), tabAcc=document.getElementById('tabAcc');
+  var vOrig=document.getElementById('vOrig'), vAcc=document.getElementById('vAcc');
+  var currentId=null, connWarned=false, pollTimer=null;
+
+  drop.addEventListener('click', function(){ file.click(); });
+  ['dragenter','dragover'].forEach(function(ev){ drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.add('over');}); });
+  ['dragleave','drop'].forEach(function(ev){ drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.remove('over');}); });
+  drop.addEventListener('drop', function(e){ var f=e.dataTransfer.files[0]; if(f) handle(f); });
+  file.addEventListener('change', function(){ if(file.files[0]) handle(file.files[0]); });
+
+  again.addEventListener('click', function(){
+    if(pollTimer){ clearInterval(pollTimer); pollTimer=null; }
+    results.style.display='none'; barwrap.style.display='none'; fileinfo.style.display='none';
+    status.textContent=''; err.style.display='none'; currentId=null; connWarned=false;
+    vismode.style.display='none'; dlVideo.style.display='none'; vPrev.style.display='none';
+    vOrig.removeAttribute('src'); vAcc.removeAttribute('src');
+    file.value=''; drop.style.display='';
+  });
+  dlInst.addEventListener('click', function(){ download('instrumental'); });
+  dlVoc.addEventListener('click', function(){ download('vocals'); });
+  dlVideo.addEventListener('click', function(){ download('video'); });
+  tabOrig.addEventListener('click', function(){ switchTab(true); });
+  tabAcc.addEventListener('click', function(){ switchTab(false); });
+
+  function switchTab(orig){
+    tabOrig.className=orig?'vtab on':'vtab';
+    tabAcc.className=orig?'vtab':'vtab on';
+    vOrig.style.display=orig?'block':'none';
+    vAcc.style.display=orig?'none':'block';
+  }
+
+  var dbgPath=document.getElementById('dbgPath'), dbgGo=document.getElementById('dbgGo');
+  dbgGo.addEventListener('click', function(){ startByPath(dbgPath.value); });
+  dbgPath.addEventListener('keydown', function(e){ if(e.key==='Enter') startByPath(dbgPath.value); });
+
+  function getMode(){
+    var els=document.getElementsByName('vidmode');
+    for(var i=0;i<els.length;i++){ if(els[i].checked) return els[i].value; }
+    return 'add_track';
+  }
+
+  function startByPath(p){
+    if(!p || !p.trim()){ showErr('请先在「调试 / 本地路径导入」中输入服务器本地音频路径'); return; }
+    var body=JSON.stringify({path:p.trim()});
+    fetch('/api/upload_path', {method:'POST', headers:{'Content-Type':'application/json'}, body:body})
+      .then(function(r){ return r.json(); })
+      .then(function(r){
+        if(!r.ok){ showErr('创建任务失败：'+(r.error||'未知错误')); return; }
+        currentId=r.id; connWarned=false;
+        if(drop){ drop.style.display='none'; }
+        vismode.style.display='none'; vPrev.style.display='none'; dlVideo.style.display='none';
+        fileinfo.style.display='';
+        fileinfo.textContent='文件：'+p.trim();
+        poll(r.id);
+      })
+      .catch(function(){
+        if(!connWarned){ connWarned=true;
+          showErr('无法连接后端服务。请确认已通过「启动.vbs」启动服务，并访问 http://127.0.0.1:8900/ 使用本页。');
+        }
+      });
+  }
+
+  function download(stem){
+    var a=document.createElement('a');
+    a.href='/api/download?id='+currentId+'&stem='+stem;
+    a.download=''; document.body.appendChild(a); a.click(); a.remove();
+  }
+
+  function showErr(msg){ err.textContent=msg; err.style.display='block'; }
+
+  function handle(f){
+    err.style.display='none'; results.style.display='none'; barwrap.style.display='none';
+    vPrev.style.display='none'; dlVideo.style.display='none';
+    drop.style.display='none';
+    fileinfo.style.display='';
+    fileinfo.textContent='文件：'+f.name+'　·　'+fmt(f.size);
+    var vid = /\.(mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|m2ts|3gp|ogv)$/i.test(f.name);
+    vismode.style.display = vid ? 'block' : 'none';
+    var mode = vid ? getMode() : 'add_track';
+    var fd=new FormData(); fd.append('file', f); fd.append('mode', mode);
+    var xhr=new XMLHttpRequest();
+    xhr.open('POST','/api/upload');
+    xhr.upload.onprogress=function(e){
+      if(e.lengthComputable){
+        var pct=Math.round(e.loaded/e.total*100);
+        showBar(pct,100);
+        status.textContent='上传中… '+pct+'%（'+fmt(e.loaded)+' / '+fmt(e.total)+'）';
+      }
+    };
+    xhr.onload=function(){
+      var r; try{ r=JSON.parse(xhr.responseText); }catch(e){ r={ok:false,error:xhr.responseText}; }
+      if(!r.ok){ showErr('上传失败：'+(r.error||'未知错误')); resetBar(); return; }
+      currentId=r.id; connWarned=false; poll(r.id);
+    };
+    xhr.onerror=function(){
+      showErr('网络错误：无法连接后端服务。请确认已双击「启动.vbs」启动服务，并通过 http://127.0.0.1:8900/ 访问本页（不要直接双击 index.html 文件打开）。');
+      resetBar();
+    };
+    xhr.send(fd);
+  }
+
+  function showBar(pct,total){ barwrap.style.display='block'; barfill.style.width=(total?Math.round(pct/total*100):0)+'%'; }
+  function resetBar(){ barwrap.style.display='block'; }
+
+  function fmtTime(s){
+    s=Math.floor(s||0);
+    if(s<60) return s+' 秒';
+    var m=Math.floor(s/60), r=s%60;
+    return m+' 分 '+(r<10?'0':'')+r+' 秒';
+  }
+
+  function poll(id){
+    if(pollTimer) clearInterval(pollTimer);
+    pollTimer=setInterval(function(){
+      fetch('/api/task?id='+id)
+        .then(function(r){ return r.json(); })
+        .then(function(t){
+          var pct = (typeof t.pct==='number') ? t.pct : (t.total?Math.round((t.progress||0)/t.total*100):0);
+          if(t.status==='extracting'){
+            showBar(0,100); status.textContent='正在从视频提取音轨…';
+          } else if(t.status==='decoding'){
+            showBar(0,100); status.textContent='正在解码音频…';
+          } else if(t.status==='processing'){
+            showBar(pct,100);
+            status.textContent='分离中… '+pct+'%（'+(t.progress||0)+' / '+(t.total||'?')+' 分块，已用 '+fmtTime(t.elapsed)+'，CPU 处理请耐心等待）';
+          } else if(t.status==='saving'){
+            showBar(100,100); status.textContent='分离完成，正在写入音频文件…';
+          } else if(t.status==='merging'){
+            showBar(100,100); status.textContent='正在把伴奏音轨合并进视频（视频流复制，仅重编码音频）…';
+          } else if(t.status==='done'){
+            if(pollTimer){ clearInterval(pollTimer); pollTimer=null; }
+            showBar(100,100); status.textContent='分离完成（用时 '+fmtTime(t.elapsed)+'）';
+            setTimeout(function(){
+              results.style.display='block'; barwrap.style.display='none';
+              if(t.is_video){
+                dlVideo.style.display=''; vPrev.style.display='block';
+                vOrig.src='/api/download?id='+id+'&stem=original';
+                vAcc.src='/api/download?id='+id+'&stem=preview';
+                vOrig.load(); vAcc.load();
+              }
+            },400);
+          } else if(t.status==='error'){
+            if(pollTimer){ clearInterval(pollTimer); pollTimer=null; }
+            resetBar(); status.textContent='';
+            showErr('处理出错：'+(t.error||'未知错误'));
+          } else if(t.status==='cancelled'){
+            if(pollTimer){ clearInterval(pollTimer); pollTimer=null; }
+            status.textContent='已取消';
+          }
+        })
+        .catch(function(){
+          status.textContent='与后端服务通信中断，正在重试…';
+          if(!connWarned){
+            connWarned=true;
+            showErr('无法连接后端服务。请确认已双击「启动.vbs」启动服务，并访问 http://127.0.0.1:8900/ 使用本页（请勿直接双击 index.html 文件打开）。');
+          }
+        });
+    },400);
+  }
+
+  function fmt(b){
+    if(b>1048576) return (b/1048576).toFixed(1)+' MB';
+    if(b>1024) return (b/1024).toFixed(1)+' KB';
+    return b+' B';
+  }
+
+  // 支持 URL ?path=... 自动创建任务（调试/自动化用），加载时若带参数则直接启动
+  (function(){
+    var q={};
+    (location.search||'').replace(/[?&]([^=]+)=([^&]*)/g,function(_,k,v){ q[decodeURIComponent(k)]=decodeURIComponent((v||'').replace(/\+/g,' ')); });
+    if(q.path && q.path.trim()){
+      startByPath(q.path);
+    }
+  })();
+})();
+</script>
+</body>
+</html>

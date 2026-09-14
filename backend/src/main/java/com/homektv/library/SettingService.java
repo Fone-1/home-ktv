@@ -31,9 +31,9 @@ public class SettingService {
     public static final String DUAL_TRACK_AUDIO_BITRATE = "dual_track_audio_bitrate";
 
     public static final Map<String, Object> DUAL_TRACK_DEFAULTS = Map.of(
-            DUAL_TRACK_ENGINE, "DSP",
-            DUAL_TRACK_REMOTE_URL, "",
-            DUAL_TRACK_REMOTE_TOKEN, "",
+            DUAL_TRACK_ENGINE, "REMOTE_AI",
+            DUAL_TRACK_REMOTE_URL, System.getenv().getOrDefault("KTV_DUAL_TRACK_REMOTE_URL", "http://127.0.0.1:8900/api/separate"),
+            DUAL_TRACK_REMOTE_TOKEN, System.getenv().getOrDefault("KTV_DUAL_TRACK_REMOTE_TOKEN", ""),
             DUAL_TRACK_CONCURRENCY, 1,
             DUAL_TRACK_BACKUP_ORIGINAL, false,
             DUAL_TRACK_AUDIO_BITRATE, "192k"
@@ -181,9 +181,13 @@ public class SettingService {
 
     public DualTrackPolicy dualTrackPolicy() {
         Map<String, Object> settings = getAll();
-        String rawEngine = String.valueOf(settings.getOrDefault(DUAL_TRACK_ENGINE, "DSP")).toUpperCase();
-        String engine = Set.of("DSP", "LOCAL_AI", "REMOTE_AI").contains(rawEngine) ? rawEngine : "DSP";
-        String remoteUrl = String.valueOf(settings.getOrDefault(DUAL_TRACK_REMOTE_URL, "")).trim();
+        String rawEngine = String.valueOf(settings.getOrDefault(DUAL_TRACK_ENGINE, "REMOTE_AI")).toUpperCase();
+        String engine = Set.of("DSP", "LOCAL_AI", "REMOTE_AI").contains(rawEngine) ? rawEngine : "REMOTE_AI";
+        String defaultRemoteUrl = System.getenv().getOrDefault("KTV_DUAL_TRACK_REMOTE_URL", "http://127.0.0.1:8900/api/separate");
+        String remoteUrl = String.valueOf(settings.getOrDefault(DUAL_TRACK_REMOTE_URL, defaultRemoteUrl)).trim();
+        if (remoteUrl.isBlank()) {
+            remoteUrl = defaultRemoteUrl;
+        }
         String remoteToken = String.valueOf(settings.getOrDefault(DUAL_TRACK_REMOTE_TOKEN, "")).trim();
         int concurrency = settings.get(DUAL_TRACK_CONCURRENCY) instanceof Number n
                 ? Math.max(1, Math.min(3, n.intValue())) : 1;

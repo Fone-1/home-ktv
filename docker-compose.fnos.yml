@@ -26,6 +26,14 @@ services:
     devices:
       # 飞牛 fnOS Intel 核显透传（用于 VAAPI 极速硬件转码与音视频处理）
       - /dev/dri:/dev/dri
+    # NVIDIA 独显加速支持（若宿主机安装了 NVIDIA Container Toolkit，取消下方注释即刻开启 CUDA 硬件加速）
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
     environment:
       # 服务监听端口（与下方发布的 TCP 端口一致）
       SERVER_PORT: 8080
@@ -38,6 +46,9 @@ services:
       KTV_SOURCE_LIBRARY_PATH: /source-music
       KTV_LIBRARY_PATH: /music
       KTV_DATA_PATH: /data
+      # 单轨转双轨伴奏系统 (方案B: UVR-MDX-Net 深度学习 AI 伴奏分离)
+      KTV_DUAL_TRACK_ENGINE: "REMOTE_AI"
+      KTV_DUAL_TRACK_REMOTE_URL: "http://ai-service:8900/api/separate"
       # 局域网服务发现配置
       KTV_DISCOVERY_ENABLED: "true"
       KTV_DISCOVERY_UDP_PORT: 18888
@@ -81,6 +92,56 @@ services:
       timeout: 5s
       retries: 20
       start_period: 30s
+    depends_on:
+      ai-service:
+        condition: service_healthy
+
+  # --------------------------------------------------------------------------
+  # UVR-MDX-Net 深度学习人声伴奏分离微服务 (方案B: 生产环境母带级高保真分离)
+  # 支持 Intel/AMD 核显透传 (/dev/dri) 及 NVIDIA 独显 (CUDA / DirectML) 加速
+  # --------------------------------------------------------------------------
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+      args:
+        BASE_REGISTRY: docker.m.daocloud.io
+    image: home-ktv-ai:latest
+    container_name: ktv-ai
+    restart: unless-stopped
+    stop_grace_period: 15s
+    devices:
+      # 核显硬件加速透传 (Intel/AMD)
+      - /dev/dri:/dev/dri
+    # NVIDIA 独显加速支持（若宿主机安装了 NVIDIA Container Toolkit，取消下方注释即刻开启 CUDA 硬件加速）
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    environment:
+      UVR_PORT: 8900
+      TZ: Asia/Shanghai
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes:
+      # 挂载 AI 模型目录，支持持久化及动态热替换模型
+      - type: bind
+        source: ./ai-service/models
+        target: /app/models
+        bind:
+          create_host_path: true
+    ports:
+      # 暴露 AI 微服务 HTTP 接口，可供宿主机或其他局域网服务调用
+      - "8900:8900/tcp"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8900/api/health')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   # --------------------------------------------------------------------------
   # 内置独立 PostgreSQL 服务（备选：若不复用宿主机 5433 现有库，可取消注释并启用）

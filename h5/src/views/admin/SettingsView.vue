@@ -116,15 +116,15 @@
           </div>
           <div class="setting-group">
             <div class="group-head"><div><strong>单轨转双轨伴奏系统</strong><span>单音轨 MV 声学滤波消音与 AI 伴奏分离</span></div></div>
-            <SettingRow id="dual_track_engine" label="伴奏分离算法" hint="DSP 极速声学滤波（2~5秒，零额外依赖）；AI 支持外接深度学习服务">
+            <SettingRow id="dual_track_engine" label="伴奏分离算法" hint="UVR-MDX-Net 深度学习 AI 提取母带级伴奏（方案B，默认）；DSP 极速声学滤波（2~5秒兜底）">
               <select v-model="form.dual_track_engine" class="input">
-                <option value="DSP">FFmpeg 极速分频带 DSP 消音 (推荐)</option>
-                <option value="REMOTE_AI">远程 AI 分离微服务 (Demucs / UVR5)</option>
-                <option value="LOCAL_AI">本地 AI 模型 (ONNX / UVR-MDX-Net)</option>
+                <option value="REMOTE_AI">UVR-MDX-Net 深度学习 AI 分离 (方案B: 推荐)</option>
+                <option value="DSP">FFmpeg 极速分频带 DSP 声学消音 (2~5秒)</option>
+                <option value="LOCAL_AI">本地 AI 模型 (ONNX 推理)</option>
               </select>
             </SettingRow>
             <SettingRow v-if="form.dual_track_engine === 'REMOTE_AI'" id="dual_track_remote_url" label="远程 AI 服务地址" hint="例如 http://ai-server:8000/api/separate">
-              <input v-model="form.dual_track_remote_url" class="input" placeholder="http://192.168.1.100:8000/api/separate" />
+              <input v-model="form.dual_track_remote_url" class="input" placeholder="http://127.0.0.1:8900/api/separate" />
             </SettingRow>
             <SettingRow v-if="form.dual_track_engine === 'REMOTE_AI'" id="dual_track_remote_token" label="远程服务鉴权 Token" hint="Bearer Token（如服务未设密码可留空）">
               <input v-model="form.dual_track_remote_token" type="password" class="input" placeholder="输入 Token..." />
@@ -214,7 +214,7 @@ const categories = [
   { key: 'maintenance', label: '数据维护', description: '修复与清理', icon: Wrench }
 ]
 const search = ref(''); const section = ref(route.query.section && categories.some(x => x.key === route.query.section) ? route.query.section : 'basic')
-const form = reactive({ library_watch_enabled:false, qr_address:'', delete_source_after_transcode:false, tv_video_scale_mode:'zoom', standby_carousel:true, standby_source:'mixed', standby_song_ids:[], standby_logo_path:'', anti_burn:true, mini_qr:true, standby_welcome:'今晚开唱', standby_subtitle:'手机点歌，电视欢唱\n一家人的客厅 KTV', standby_interval_sec:8, direct_copy_containers:['mp4','m4v','mkv'], direct_copy_video_codecs:['h264','hevc'], direct_copy_audio_codecs:['aac','mp3'], transcode_audio_only:false, transcode_output_container:'mkv', transcode_video_codec:'h264', transcode_audio_codec:'aac', transcode_hardware_acceleration:false, dual_track_engine:'DSP', dual_track_remote_url:'', dual_track_remote_token:'', dual_track_concurrency:1, dual_track_backup_original:false, dual_track_audio_bitrate:'192k', mv_auto_enqueue:true, mv_auto_convert_dual_track:false })
+const form = reactive({ library_watch_enabled:false, qr_address:'', delete_source_after_transcode:false, tv_video_scale_mode:'zoom', standby_carousel:true, standby_source:'mixed', standby_song_ids:[], standby_logo_path:'', anti_burn:true, mini_qr:true, standby_welcome:'今晚开唱', standby_subtitle:'手机点歌，电视欢唱\n一家人的客厅 KTV', standby_interval_sec:8, direct_copy_containers:['mp4','m4v','mkv'], direct_copy_video_codecs:['h264','hevc'], direct_copy_audio_codecs:['aac','mp3'], transcode_audio_only:false, transcode_output_container:'mkv', transcode_video_codec:'h264', transcode_audio_codec:'aac', transcode_hardware_acceleration:false, dual_track_engine:'REMOTE_AI', dual_track_remote_url:'http://127.0.0.1:8900/api/separate', dual_track_remote_token:'', dual_track_concurrency:1, dual_track_backup_original:false, dual_track_audio_bitrate:'192k', mv_auto_enqueue:true, mv_auto_convert_dual_track:false })
 const ai = reactive({ enabled:false, apiKeyConfigured:false, apiKeySuffix:null, sources:{}, capabilities:{}, lastTestAt:null })
 const aiForm = reactive({ enabled:false, baseUrl:'', apiKey:'', bulkModel:'', reasoningModel:'', timeoutSeconds:60, identityThreshold:.97, classificationThreshold:.92, jsonMode:'AUTO', bulkConcurrency:2, reasoningConcurrency:1 })
 const musicForm = reactive({enabled:false,providers:[],resultLimit:20,timeoutSeconds:5,searchCacheHours:6,concurrencyLimit:1,requestIntervalMs:1500,autoApplyThreshold:.95})

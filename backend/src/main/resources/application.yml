@@ -24,6 +24,13 @@ app:
   source-library-path: ${KTV_SOURCE_LIBRARY_PATH:/source-music}
   ktv-library-path: ${KTV_LIBRARY_PATH:/music}
   data-path: ${KTV_DATA_PATH:./data}
+  dual-track:
+    engine: ${KTV_DUAL_TRACK_ENGINE:REMOTE_AI}
+    remote-url: ${KTV_DUAL_TRACK_REMOTE_URL:http://127.0.0.1:8900/api/separate}
+    remote-token: ${KTV_DUAL_TRACK_REMOTE_TOKEN:}
+    concurrency: ${KTV_DUAL_TRACK_CONCURRENCY:1}
+    backup-original: ${KTV_DUAL_TRACK_BACKUP_ORIGINAL:false}
+    audio-bitrate: ${KTV_DUAL_TRACK_AUDIO_BITRATE:192k}
   config-master-key-path: ${KTV_CONFIG_MASTER_KEY_PATH:/data/secrets/config.key}
   ffprobe-path: ${KTV_FFPROBE_PATH:ffprobe}
   transcode:

@@ -184,14 +184,14 @@ async function swapVocalTracks() {
 async function triggerConvertDualTrack() {
   if (!song.value?.id) return
   const currentSong = song.value
-  const confirmed = await confirmDialog(`将为《${currentSong.title}》使用极速 DSP 声学滤波分离伴奏，转换后即可自由切换原唱与伴唱，耗时约 2~5 秒。是否开始？`, {
-    title: '生成 KTV 伴奏'
+  const confirmed = await confirmDialog(`将为《${currentSong.title}》使用 UVR-MDX-Net 深度学习 AI 提取母带级纯净伴奏，转换后即可自由切换原唱与伴唱。是否开始？`, {
+    title: '生成 AI 高保真 KTV 伴奏'
   })
   if (!confirmed) return
   convertingDualTrack.value = true
   try {
-    await api.convertSongDualTrack(currentSong.id, { mode: 'DSP', backupOriginal: false, outputFormat: 'mp4' })
-    toast('已提交伴奏生成任务，正在快速消音重构中...')
+    await api.convertSongDualTrack(currentSong.id, { mode: 'AI', backupOriginal: false, outputFormat: 'mp4' })
+    toast('已提交 AI 伴奏生成任务，正在深度学习分离重构中...')
     let checkCount = 0
     const checkTimer = setInterval(() => {
       checkCount++
