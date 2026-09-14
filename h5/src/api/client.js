@@ -238,15 +238,8 @@ export function makeControls(clientToken) {
   return {
     order: (songId, force = false, priority = false) => c('order', { song_id: songId, force, priority }),
     orderAndTop: async (songId, force = false) => {
-      const snap = await c('order', { song_id: songId, force, priority: true })
-      const targetId = Number(songId)
-      if (snap?.list?.length) {
-        const item = snap.list.find(q => q.song?.id === targetId)
-        if (item && item.queueId) {
-          try { await c('top', { queue_id: item.queueId }) } catch { /* ignore */ }
-        }
-      }
-      return snap
+      // 原子优先插播：单次请求完成，服务端直接排入当前播放歌曲之后，避免追加再置顶的竞态
+      return c('order', { song_id: songId, force, priority: true })
     },
     top: (queueId) => c('top', { queue_id: queueId }),
     cancel: (queueId) => c('cancel', { queue_id: queueId }),

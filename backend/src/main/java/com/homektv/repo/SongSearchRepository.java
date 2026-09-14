@@ -37,7 +37,9 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
      */
     @Query(value = """
             SELECT * FROM songs
-            WHERE status = 'ok' AND (
+            WHERE status = 'ok'
+              AND (:type IS NULL OR :type = '' OR media_type = :type)
+              AND (
                   title ILIKE '%' || :kw || '%'
                OR artist ILIKE '%' || :kw || '%'
                OR title_init = :kw
@@ -51,8 +53,9 @@ public interface SongSearchRepository extends JpaRepository<Song, Long> {
               (title ILIKE :kw || '%') DESC,
               (media_type = 'KTV_VIDEO') DESC,
               similarity(title, :kw) DESC,
-              play_count DESC
+              play_count DESC,
+              id ASC
             """,
             nativeQuery = true)
-    List<Song> search(@Param("kw") String keyword, Pageable pageable);
+    List<Song> search(@Param("kw") String keyword, @Param("type") String type, Pageable pageable);
 }

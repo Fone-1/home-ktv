@@ -33,6 +33,7 @@ public class QueueService {
     public static final String SKIPPED = "skipped";
 
     private static final double STEP = 1000.0;
+    private final Object queueLock = new Object();
 
     private final QueueItemRepository queueRepo;
     private final SongRepository songRepo;
@@ -46,17 +47,42 @@ public class QueueService {
     }
 
     /**
+     * 点歌结果信息。
+     *
+     * Result of an order operation, including the queue item, final position,
+     * duplicate indicator, and whether playback was started.
+     */
+    public record OrderResult(
+            QueueItem item,
+            int position,
+            boolean duplicated,
+            boolean started
+    ) {}
+
+    /**
      * 点歌：追加到队尾。
      * 同一首歌已在等待队列 → 抛 SONG_IN_QUEUE（携带位次）；force=true 时允许重复插入（合唱场景）。
      */
     @Transactional
     public QueueItem order(Long songId, Long userId, boolean force) {
+        return order(songId, userId, force, false).item();
+    }
+
+    /**
+     * 点歌/优先插播原子操作：
+     * - priority=false 时追加到队尾；
+     * - priority=true 时原子创建在当前播放歌曲之后的位置（第一位等待歌曲之前），无需先追加再置顶；
+     * - 校验文件与重复状态，单次事务内完成并计算最终排位。
+     */
+    @Transactional
+    public OrderResult order(Long songId, Long userId, boolean force, boolean priority) {
         Song song = songRepo.findById(songId)
                 .orElseThrow(() -> new ApiException("SONG_NOT_FOUND", "歌曲不存在"));
         if ("file_missing".equals(song.getStatus())) {
             throw new ApiException("FILE_MISSING", "歌曲文件丢失，无法点播");
         }
 
+        boolean duplicated = false;
         if (!force) {
             queueRepo.lockSongForOrder(songId);
             Optional<QueueItem> dup = queueRepo.findFirstBySongIdAndStatus(songId, WAITING);
@@ -65,18 +91,49 @@ public class QueueService {
                 throw new ApiException("SONG_IN_QUEUE",
                         "《" + song.getTitle() + "》已在队列中，第 " + pos + " 位", pos);
             }
+        } else {
+            duplicated = queueRepo.findFirstBySongIdAndStatus(songId, WAITING).isPresent();
         }
 
-        double tail = queueRepo.findFirstByStatusOrderByOrderIndexDesc(WAITING)
-                .map(QueueItem::getOrderIndex)
-                .orElseGet(this::currentOrBaseIndex);
+        synchronized (queueLock) {
+            double targetIndex;
+            if (priority) {
+                double currentIndex = currentPlayingIndex();
+                List<QueueItem> waiting = queueRepo.findByStatusOrderByOrderIndexAsc(WAITING);
+                double nextIndex = waiting.stream()
+                        .mapToDouble(QueueItem::getOrderIndex)
+                        .filter(idx -> idx > currentIndex)
+                        .min()
+                        .orElse(currentIndex + 2 * STEP);
 
-        QueueItem item = new QueueItem();
-        item.setSongId(songId);
-        item.setOrderedBy(userId);
-        item.setOrderIndex(tail + STEP);
-        item.setStatus(WAITING);
-        return queueRepo.save(item);
+                // 若浮点步长过小，重排整列等待歌曲以重置步长
+                if (nextIndex - currentIndex < 0.001) {
+                    reindexWaiting(currentIndex);
+                    waiting = queueRepo.findByStatusOrderByOrderIndexAsc(WAITING);
+                    nextIndex = waiting.stream()
+                            .mapToDouble(QueueItem::getOrderIndex)
+                            .filter(idx -> idx > currentIndex)
+                            .min()
+                            .orElse(currentIndex + 2 * STEP);
+                }
+                targetIndex = (currentIndex + nextIndex) / 2.0;
+            } else {
+                double tail = queueRepo.findFirstByStatusOrderByOrderIndexDesc(WAITING)
+                        .map(QueueItem::getOrderIndex)
+                        .orElseGet(this::currentOrBaseIndex);
+                targetIndex = tail + STEP;
+            }
+
+            QueueItem item = new QueueItem();
+            item.setSongId(songId);
+            item.setOrderedBy(userId);
+            item.setOrderIndex(targetIndex);
+            item.setStatus(WAITING);
+            item = queueRepo.save(item);
+
+            int pos = positionOf(item);
+            return new OrderResult(item, pos, duplicated, false);
+        }
     }
 
     /**
@@ -91,18 +148,40 @@ public class QueueService {
             throw new ApiException("INVALID_ACTION", "只能顶起等待中的歌曲");
         }
 
-        double currentIndex = currentPlayingIndex();
-        // 找当前播放之后的第一个等待项
-        List<QueueItem> waiting = queueRepo.findByStatusOrderByOrderIndexAsc(WAITING);
-        double nextIndex = waiting.stream()
-                .filter(q -> !q.getId().equals(queueId) && q.getOrderIndex() > currentIndex)
-                .mapToDouble(QueueItem::getOrderIndex)
-                .min()
-                .orElse(currentIndex + 2 * STEP);
+        synchronized (queueLock) {
+            double currentIndex = currentPlayingIndex();
+            // 找当前播放之后的第一个等待项
+            List<QueueItem> waiting = queueRepo.findByStatusOrderByOrderIndexAsc(WAITING);
+            double nextIndex = waiting.stream()
+                    .filter(q -> !q.getId().equals(queueId) && q.getOrderIndex() > currentIndex)
+                    .mapToDouble(QueueItem::getOrderIndex)
+                    .min()
+                    .orElse(currentIndex + 2 * STEP);
 
-        // 插到 current 与 next 的中值 → 排到最前（后顶者更前）
-        item.setOrderIndex((currentIndex + nextIndex) / 2.0);
-        return queueRepo.save(item);
+            if (nextIndex - currentIndex < 0.001) {
+                reindexWaiting(currentIndex);
+                waiting = queueRepo.findByStatusOrderByOrderIndexAsc(WAITING);
+                nextIndex = waiting.stream()
+                        .filter(q -> !q.getId().equals(queueId) && q.getOrderIndex() > currentIndex)
+                        .mapToDouble(QueueItem::getOrderIndex)
+                        .min()
+                        .orElse(currentIndex + 2 * STEP);
+            }
+
+            // 插到 current 与 next 的中值 → 排到最前（后顶者更前）
+            item.setOrderIndex((currentIndex + nextIndex) / 2.0);
+            return queueRepo.save(item);
+        }
+    }
+
+    private void reindexWaiting(double currentIndex) {
+        List<QueueItem> waiting = queueRepo.findByStatusOrderByOrderIndexAsc(WAITING);
+        double idx = currentIndex + STEP;
+        for (QueueItem q : waiting) {
+            q.setOrderIndex(idx);
+            idx += STEP;
+        }
+        queueRepo.saveAll(waiting);
     }
 
     /**

@@ -53,6 +53,10 @@ public class CategoryBrowseService {
     }
 
     public List<SongDto> songs(String artist, String artistGender, String language, String tag, String vocalForm, String sort, int limit) {
+        return songs(artist, artistGender, language, tag, vocalForm, null, sort, limit);
+    }
+
+    public List<SongDto> songs(String artist, String artistGender, String language, String tag, String vocalForm, String mediaType, String sort, int limit) {
         int safeLimit = Math.max(1, Math.min(limit, 200));
         Comparator<Song> comparator = "title".equalsIgnoreCase(sort)
                 ? Comparator.comparing(Song::getTitle, String.CASE_INSENSITIVE_ORDER)
@@ -63,7 +67,8 @@ public class CategoryBrowseService {
                 .filter(song -> blank(artist) || song.getArtist().equalsIgnoreCase(artist))
                 .filter(song -> blank(artistGender) || artistGender.equalsIgnoreCase(song.getArtistGender()))
                 .filter(song -> blank(language) || song.getLanguage().equalsIgnoreCase(language))
-                .filter(song -> blank(vocalForm) || vocalForm.equalsIgnoreCase(song.getAiVocalForm()))
+                .filter(song -> blank(vocalForm) || vocalForm.trim().equalsIgnoreCase(song.resolveEffectiveVocalForm()))
+                .filter(song -> blank(mediaType) || (song.getMediaType() != null && song.getMediaType().trim().equalsIgnoreCase(mediaType.trim())))
                 .filter(song -> blank(tag) || contains(song.getTags(), tag) || contains(song.getAiGenres(), tag) || contains(song.getAiThemes(), tag))
                 .sorted(comparator)
                 .limit(safeLimit)

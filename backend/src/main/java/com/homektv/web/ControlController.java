@@ -69,12 +69,16 @@ public class ControlController {
 
         switch (action) {
             case "order" -> {
-                queueService.order(req.longParam("song_id"), userId, req.boolParam("force"));
+                boolean priority = req.boolParam("priority");
+                boolean force = req.boolParam("force");
+                QueueService.OrderResult result = queueService.order(
+                        req.longParam("song_id"), userId, force, priority);
                 boolean started = playbackService.startIfIdle();
-                broadcast(WsEvent.QUEUE_UPDATED);
-                if (started) {
-                    broadcast(WsEvent.NOW_PLAYING);
-                }
+                // 单次广播最终状态，避免播放启动时的双重广播覆盖
+                broadcast(started ? WsEvent.NOW_PLAYING : WsEvent.QUEUE_UPDATED);
+                QueueSnapshot snapshot = snapshotService.snapshot();
+                int finalPos = started ? 0 : result.position();
+                return snapshot.withOrderResult(result.item().getId(), finalPos, result.duplicated(), started);
             }
             case "shuffle" -> {
                 queueService.shuffleWaiting();

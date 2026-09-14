@@ -177,6 +177,29 @@ public class Song {
     public void setLanguage(String language) { this.language = language; }
     public String getVocalForm() { return vocalForm; }
     public void setVocalForm(String vocalForm) { this.vocalForm = vocalForm; }
+
+    /**
+     * 解析有效演唱形式（优先级：人工锁定/编辑 > 基础元数据 > AI 建议 > 未知）。
+     *
+     * Resolves the effective vocal form based on priority:
+     * manual lock/edit > base vocal form > AI vocal form > "未知".
+     */
+    public String resolveEffectiveVocalForm() {
+        if (isMetadataLocked("vocalForm") && isValidVocalForm(vocalForm)) {
+            return vocalForm.trim();
+        }
+        if (isValidVocalForm(vocalForm)) {
+            return vocalForm.trim();
+        }
+        if (isValidVocalForm(aiVocalForm)) {
+            return aiVocalForm.trim();
+        }
+        return "未知";
+    }
+
+    private static boolean isValidVocalForm(String form) {
+        return form != null && !form.isBlank() && !"未知".equalsIgnoreCase(form.trim());
+    }
     public String getArtistGender() { return artistGender; }
     public void setArtistGender(String artistGender) { this.artistGender = artistGender; }
     public String[] getMetadataLocks() { return metadataLocks; }

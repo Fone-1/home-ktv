@@ -39,6 +39,7 @@ public class CategoryBrowseController {
      * @param language 语言（可选）。Language (optional).
      * @param tag      标签（可选）。Tag (optional).
      * @param vocalForm 演唱形式（可选）。Vocal form (optional).
+     * @param mediaType 媒体类型过滤（可选，如 KTV_VIDEO/MV/AUDIO）。Media type filter (optional).
      * @param sort     排序方式，默认 "hot"。Sort order, defaults to "hot".
      * @param limit    返回数量上限，默认 100。Maximum number of results, defaults to 100.
      * @return 符合条件的歌曲列表。List of matching songs.
@@ -49,8 +50,9 @@ public class CategoryBrowseController {
                                @RequestParam(required = false) String language,
                                @RequestParam(required = false) String tag,
                                @RequestParam(required = false) String vocalForm,
+                               @RequestParam(required = false) String mediaType,
                                @RequestParam(defaultValue = "hot") String sort,
                                @RequestParam(defaultValue = "100") int limit) {
-        return service.songs(artist, artistGender, language, tag, vocalForm, sort, limit);
+        return service.songs(artist, artistGender, language, tag, vocalForm, mediaType, sort, limit);
     }
 }

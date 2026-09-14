@@ -15,8 +15,23 @@ public record QueueSnapshot(
         boolean muted,
         String vocalMode,  // original/accompaniment
         boolean tvOnline,  // TV 是否在线（P2.13：H5 据此显示「电视未连接」横幅） / Whether TV is online (P2.13: H5 shows "TV not connected" banner based on this)
-        long connectedPhones
+        long connectedPhones,
+        Long queueId,
+        Integer position,
+        Boolean duplicated,
+        Boolean playbackStarted
 ) {
+    public QueueSnapshot(NowPlaying playing, List<QueueEntry> list, String state,
+                         int volume, boolean muted, String vocalMode,
+                         boolean tvOnline, long connectedPhones) {
+        this(playing, list, state, volume, muted, vocalMode, tvOnline, connectedPhones, null, null, null, null);
+    }
+
+    public QueueSnapshot withOrderResult(Long queueId, Integer position, Boolean duplicated, Boolean playbackStarted) {
+        return new QueueSnapshot(playing, list, state, volume, muted, vocalMode, tvOnline, connectedPhones,
+                queueId, position, duplicated, playbackStarted);
+    }
+
     /** 正在播放 / Now playing */
     public record NowPlaying(Long queueId, SongDto song, String orderedByNick) {}
 

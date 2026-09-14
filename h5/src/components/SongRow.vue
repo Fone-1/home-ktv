@@ -186,19 +186,26 @@ const queueItem = computed(() => queueIndex.value >= 0 ? player.queue[queueIndex
  */
 async function doOrder(priority = false, force = false) {
   try {
+    const res = priority
+      ? await controls.orderAndTop(props.song.id, force)
+      : await controls.order(props.song.id, force)
+
     if (priority) {
-      await controls.orderAndTop(props.song.id, force)
-      toast(`已将《${props.song.title}》设为下一首播放！`)
+      if (res?.playbackStarted) {
+        toast(`已开启播放《${props.song.title}》！`)
+      } else {
+        const pos = res?.position ?? 1
+        toast(pos === 1 ? `已将《${props.song.title}》设为下一首播放！` : `已将《${props.song.title}》优先插播至待唱第 ${pos} 首！`)
+      }
     } else {
-      await controls.order(props.song.id, force)
-      // 加入成功后，Toast 提供一键设为下一首的快捷入口
-      toast(`已加入队列 · 待唱第 ${player.queueCount || 1} 首`, {
+      const pos = res?.position ?? (player.queueCount || 1)
+      toast(`已加入队列 · 待唱第 ${pos} 首`, {
         actionText: '设为下一首',
         onAction: async () => {
-          const item = (player.queue || []).find(q => q.song?.id === props.song.id)
-          if (item?.queueId) {
+          const targetQueueId = res?.queueId || (player.queue || []).find(q => q.song?.id === props.song.id)?.queueId
+          if (targetQueueId) {
             try {
-              await controls.top(item.queueId)
+              await controls.top(targetQueueId)
               toast(`已将《${props.song.title}》插播至下一首！`)
             } catch (err) {
               toast(err.message || '置顶失败')
