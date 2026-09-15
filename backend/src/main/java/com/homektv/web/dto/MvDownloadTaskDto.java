@@ -21,6 +21,10 @@ public record MvDownloadTaskDto(
         String targetFilePath,
         Long songId,
         boolean autoConvertDualTrack,
+        String etag,
+        String lastModified,
+        String resumeState,
+        int retryCount,
         String errorMessage,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
@@ -43,6 +47,10 @@ public record MvDownloadTaskDto(
                 task.getTargetFilePath(),
                 task.getSongId(),
                 task.isAutoConvertDualTrack(),
+                task.getEtag(),
+                task.getLastModified(),
+                task.getResumeState(),
+                task.getRetryCount(),
                 task.getErrorMessage(),
                 task.getCreatedAt(),
                 task.getUpdatedAt()

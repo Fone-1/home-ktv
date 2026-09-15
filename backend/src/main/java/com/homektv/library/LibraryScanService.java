@@ -49,15 +49,25 @@ public class LibraryScanService {
     private final SongRepository songRepo;
     private final SongFileRepository fileRepo;
     private final AssetWriter assetWriter;
+    private final StandbyContentCache standbyCache;
 
     public LibraryScanService(AppProperties props, FFprobeService ffprobe, TagReader tagReader,
                               SongRepository songRepo, SongFileRepository fileRepo, AssetWriter assetWriter) {
+        // 兼容旧手工构造：使用独立缓存实例，行为一致
+        this(props, ffprobe, tagReader, songRepo, fileRepo, assetWriter, new StandbyContentCache());
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public LibraryScanService(AppProperties props, FFprobeService ffprobe, TagReader tagReader,
+                              SongRepository songRepo, SongFileRepository fileRepo, AssetWriter assetWriter,
+                              StandbyContentCache standbyCache) {
         this.props = props;
         this.ffprobe = ffprobe;
         this.tagReader = tagReader;
         this.songRepo = songRepo;
         this.fileRepo = fileRepo;
         this.assetWriter = assetWriter;
+        this.standbyCache = standbyCache;
     }
 
     public record ScanResult(int scanned, int added, int updated, int skipped, int unrecognized) {}
@@ -108,12 +118,20 @@ public class LibraryScanService {
     /** 单文件入库（幂等：已存在的文件路径按 mtime 判断是否需更新） */
     @Transactional
     public IngestOutcome ingest(Path file) {
-        return ingestInternal(file, null, null, null, false).outcome();
+        IngestState state = ingestInternal(file, null, null, null, false);
+        if (state.outcome() == IngestOutcome.ADDED) {
+            // 新歌入库会改变「新歌/混合」待机内容，失效短缓存
+            standbyCache.evict();
+        }
+        return state.outcome();
     }
 
     @Transactional
     public IngestResult ingestLibraryFile(Path file, Path sourceFile, String sourceMd5, String outputMd5, boolean transcodeRequired) {
         IngestState state = ingestInternal(file, sourceFile, sourceMd5, outputMd5, transcodeRequired);
+        if (state.outcome() == IngestOutcome.ADDED) {
+            standbyCache.evict();
+        }
         return new IngestResult(
                 state.outcome() == IngestOutcome.ADDED || state.outcome() == IngestOutcome.UPDATED,
                 state.songId(),

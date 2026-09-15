@@ -1,5 +1,6 @@
 package com.homektv.dualtrack;
 
+import com.homektv.media.ExternalProcessRunner;
 import com.homektv.web.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -8,9 +9,9 @@ import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 /**
  * 双音轨无损合流与重构封装引擎。
@@ -113,16 +114,18 @@ public class DualTrackRemuxer {
 
     private void runFfmpegCommand(String actionName, List<String> command, Path outputVideo, int timeoutSeconds) throws Exception {
         log.info("开始执行 FFmpeg {}: output={}", actionName, outputVideo.getFileName());
-        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-        String stderr = new String(process.getInputStream().readAllBytes());
-        boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+        ExternalProcessRunner.Result result = ExternalProcessRunner.run(
+                "FFmpeg " + actionName, command, outputVideo, Duration.ofSeconds(timeoutSeconds));
 
-        if (!finished) {
-            process.destroyForcibly();
+        if (result.timedOut()) {
             throw new ApiException("REMUX_TIMEOUT", actionName + "处理超时（" + timeoutSeconds + "秒）");
         }
-        if (process.exitValue() != 0 || !Files.exists(outputVideo) || Files.size(outputVideo) == 0) {
-            throw new ApiException("REMUX_FAILED", actionName + "失败 (exit=" + process.exitValue() + "): " + stderr.trim());
+        if (result.cancelled()) {
+            throw new ApiException("REMUX_CANCELLED", actionName + "已取消");
+        }
+        if (result.exitCode() != 0 || !Files.exists(outputVideo) || Files.size(outputVideo) == 0) {
+            throw new ApiException("REMUX_FAILED",
+                    actionName + "失败 (exit=" + result.exitCode() + "): " + result.diagnostic());
         }
         log.info("FFmpeg {}完成: size={} bytes", actionName, Files.size(outputVideo));
     }

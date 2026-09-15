@@ -57,7 +57,7 @@ public class DualTrackController {
     }
 
     /**
-     * 查询转换任务进度。
+     * 查询转换任务进度（批次维度，兼容原有批量弹窗）。
      */
     @GetMapping("/convert-progress")
     public Map<String, Object> progress() {
@@ -66,6 +66,33 @@ public class DualTrackController {
                 "code", "OK",
                 "data", progress
         );
+    }
+
+    /**
+     * 查询双轨转换任务列表：单曲与批次任务各自独立，含状态与失败原因。
+     */
+    @GetMapping("/convert-tasks")
+    public Map<String, Object> tasks(@RequestParam(defaultValue = "50") int limit) {
+        return Map.of(
+                "code", "OK",
+                "data", convertService.listTasks(limit)
+        );
+    }
+
+    /**
+     * 取消排队中或运行中的双轨转换任务。
+     */
+    @PostMapping("/convert-tasks/{taskId}/cancel")
+    public Map<String, Object> cancelTask(@PathVariable("taskId") Long taskId) {
+        return Map.of("code", "OK", "data", convertService.cancelTask(taskId));
+    }
+
+    /**
+     * 重试失败或已取消的双轨转换任务。
+     */
+    @PostMapping("/convert-tasks/{taskId}/retry")
+    public Map<String, Object> retryTask(@PathVariable("taskId") Long taskId) {
+        return Map.of("code", "OK", "data", convertService.retryTask(taskId));
     }
 
     /**

@@ -66,9 +66,7 @@ class CoverImageNormalizerTest {
         fixture.setRGB(0, 0, Color.BLUE.getRGB());
         Path converted = temp.resolve("converted.jpg");
         ImageIO.write(fixture, "jpg", converted.toFile());
-        Path ffmpeg = temp.resolve("fake-ffmpeg.sh");
-        Files.writeString(ffmpeg, "#!/bin/sh\nfor last; do :; done\ncp '" + converted + "' \"$last\"\n");
-        Files.setPosixFilePermissions(ffmpeg, PosixFilePermissions.fromString("rwx------"));
+        Path ffmpeg = com.homektv.support.FakeExecutable.copyFileToLastArgument(temp, "fake-ffmpeg", converted);
 
         byte[] normalized = new CoverImageNormalizer(ffmpeg.toString()).normalize("unsupported upstream bytes".getBytes());
 

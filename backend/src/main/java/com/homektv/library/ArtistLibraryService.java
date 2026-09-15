@@ -7,6 +7,9 @@ import com.homektv.ai.OpenAiCompatibleClient;
 import com.homektv.domain.Song;
 import com.homektv.repo.SongRepository;
 import com.homektv.web.ApiException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,19 +40,30 @@ public class ArtistLibraryService {
     }
 
     public List<Map<String, Object>> list(String keyword, String gender, Boolean reviewed, int limit) {
-        String query = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
-        Map<String, List<Song>> grouped = validSongs().stream()
-                .collect(Collectors.groupingBy(song -> song.getArtist() == null ? "未知歌手" : song.getArtist().trim(),
-                        LinkedHashMap::new, Collectors.toList()));
-        return grouped.entrySet().stream()
-                .filter(entry -> query.isBlank() || entry.getKey().toLowerCase(Locale.ROOT).contains(query))
-                .map(entry -> artistValue(entry.getKey(), entry.getValue()))
-                .filter(value -> gender == null || gender.isBlank() || gender.equals(value.get("gender")))
-                .filter(value -> reviewed == null || reviewed == ((Boolean) value.get("reviewed")))
-                .sorted(Comparator.comparingInt((Map<String, Object> value) -> (Integer) value.get("songCount"))
-                        .reversed().thenComparing(value -> (String) value.get("name")))
-                .limit(Math.max(1, Math.min(limit, 5000)))
-                .toList();
+        return page(keyword, gender, reviewed, 0, Math.max(1, Math.min(limit, 5000))).getContent();
+    }
+
+    /**
+     * 管理后台歌手列表分页。优先走 SQL GROUP BY 聚合；单元测试没有原生查询时回落到内存分组。
+     */
+    public Page<Map<String, Object>> page(String keyword, String gender, Boolean reviewed, int page, int size) {
+        int safeSize = Math.max(1, Math.min(size, 200));
+        int safePage = Math.max(0, page);
+        String query = keyword == null ? "" : keyword.trim();
+        String genderFilter = gender == null ? "" : gender.trim();
+        PageRequest pageable = PageRequest.of(safePage, safeSize);
+        Page<Object[]> aggregated = songs.pageAdminArtists(query, genderFilter, reviewed, pageable);
+        if (aggregated != null) {
+            // 原生查询已执行：空页表示没有匹配歌手，不能再全表回落
+            List<Map<String, Object>> content = aggregated.getContent().stream()
+                    .map(this::artistFromAggregate)
+                    .toList();
+            return new PageImpl<>(content, pageable, aggregated.getTotalElements());
+        }
+        List<Map<String, Object>> all = memoryList(query, genderFilter, reviewed);
+        int from = Math.min(safePage * safeSize, all.size());
+        int to = Math.min(from + safeSize, all.size());
+        return new PageImpl<>(all.subList(from, to), pageable, all.size());
     }
 
     /** 对一个歌手的代表歌曲进行 AI 分析；没有 AI 时返回可人工填写的未知建议。 */
@@ -128,11 +142,43 @@ public class ArtistLibraryService {
         return Map.of("artist", artist, "gender", gender, "updated", matches.size());
     }
 
-    private List<Song> validSongs() { return songs.findAll().stream().filter(song -> "ok".equals(song.getStatus())).toList(); }
+    private List<Map<String, Object>> memoryList(String keyword, String gender, Boolean reviewed) {
+        String query = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
+        Map<String, List<Song>> grouped = validSongs().stream()
+                .collect(Collectors.groupingBy(song -> song.getArtist() == null || song.getArtist().isBlank() ? "未知歌手" : song.getArtist().trim(),
+                        LinkedHashMap::new, Collectors.toList()));
+        return grouped.entrySet().stream()
+                .filter(entry -> query.isBlank() || entry.getKey().toLowerCase(Locale.ROOT).contains(query))
+                .map(entry -> artistValue(entry.getKey(), entry.getValue()))
+                .filter(value -> gender == null || gender.isBlank() || gender.equals(value.get("gender")))
+                .filter(value -> reviewed == null || reviewed == ((Boolean) value.get("reviewed")))
+                .sorted(Comparator.comparingInt((Map<String, Object> value) -> (Integer) value.get("songCount"))
+                        .reversed().thenComparing(value -> (String) value.get("name")))
+                .toList();
+    }
+
+    private Map<String, Object> artistFromAggregate(Object[] row) {
+        String name = row[0] == null ? "未知歌手" : row[0].toString();
+        int songCount = row[1] instanceof Number number ? number.intValue() : 0;
+        String gender = row[2] == null || row[2].toString().isBlank() ? "未知" : row[2].toString();
+        boolean reviewed = Boolean.TRUE.equals(row[3]);
+        List<Map<String, Object>> samples = representativeSongs(songsFor(name)).stream().map(this::songValue).toList();
+        return Map.of("name", name, "gender", gender, "reviewed", reviewed, "songCount", songCount, "songs", samples);
+    }
+
+    private List<Song> validSongs() {
+        List<Song> ok = songs.findByStatus("ok");
+        if (ok != null && !ok.isEmpty()) return ok;
+        return songs.findAll().stream().filter(song -> "ok".equals(song.getStatus())).toList();
+    }
 
     private List<Song> songsFor(String artist) {
         if (artist == null || artist.isBlank()) return List.of();
         String normalized = normalizeArtist(artist);
+        List<Song> matched = songs.findByStatusAndArtistIgnoreCase("ok", artist.trim());
+        if (matched != null && !matched.isEmpty()) {
+            return matched.stream().filter(song -> normalized.equals(normalizeArtist(song.getArtist()))).toList();
+        }
         return validSongs().stream().filter(song -> normalized.equals(normalizeArtist(song.getArtist()))).toList();
     }
 

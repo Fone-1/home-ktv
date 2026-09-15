@@ -1,5 +1,6 @@
 package com.homektv.dualtrack;
 
+import com.homektv.media.ExternalProcessRunner;
 import com.homektv.web.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -8,6 +9,7 @@ import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -23,6 +25,9 @@ import java.util.concurrent.TimeUnit;
 public class DspVocalSeparationEngine implements VocalSeparationEngine {
 
     private static final Logger log = LoggerFactory.getLogger(DspVocalSeparationEngine.class);
+
+    /** DSP 消音为纯音频处理，长曲目也应在 3 分钟内完成。 */
+    private static final Duration DSP_TIMEOUT = Duration.ofMinutes(3);
 
     /**
      * 标准分频带声学消音滤镜链定义。
@@ -50,6 +55,7 @@ public class DspVocalSeparationEngine implements VocalSeparationEngine {
         try {
             Process p = new ProcessBuilder(ffmpegPath, "-version").redirectErrorStream(true).start();
             boolean ok = p.waitFor(3, TimeUnit.SECONDS);
+            if (!ok) p.destroyForcibly();
             return ok && p.exitValue() == 0;
         } catch (Exception e) {
             log.warn("FFmpeg 未检测到或不可用: {}", e.getMessage());
@@ -76,16 +82,19 @@ public class DspVocalSeparationEngine implements VocalSeparationEngine {
         );
 
         log.info("执行 DSP 人声消除滤镜提取伴奏: input={}, output={}", inputMedia.getFileName(), outputAudio.getFileName());
-        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-        String stderr = new String(process.getInputStream().readAllBytes());
-        boolean finished = process.waitFor(120, TimeUnit.SECONDS);
+        ExternalProcessRunner.Result result = ExternalProcessRunner.run(
+                "DSP 人声分离", command, inputMedia, DSP_TIMEOUT);
 
-        if (!finished) {
-            process.destroyForcibly();
-            throw new ApiException("DSP_SEPARATION_TIMEOUT", "DSP 人声分离处理超时（120秒）");
+        if (result.timedOut()) {
+            throw new ApiException("DSP_SEPARATION_TIMEOUT",
+                    "DSP 人声分离处理超时（" + DSP_TIMEOUT.toSeconds() + "秒）");
         }
-        if (process.exitValue() != 0 || !Files.exists(outputAudio) || Files.size(outputAudio) == 0) {
-            throw new ApiException("DSP_SEPARATION_FAILED", "DSP 人声分离失败 (exit=" + process.exitValue() + "): " + stderr.trim());
+        if (result.cancelled()) {
+            throw new ApiException("DSP_SEPARATION_CANCELLED", "DSP 人声分离已取消");
+        }
+        if (result.exitCode() != 0 || !Files.exists(outputAudio) || Files.size(outputAudio) == 0) {
+            throw new ApiException("DSP_SEPARATION_FAILED",
+                    "DSP 人声分离失败 (exit=" + result.exitCode() + "): " + result.diagnostic());
         }
         return outputAudio;
     }

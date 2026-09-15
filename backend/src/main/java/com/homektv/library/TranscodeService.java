@@ -1,6 +1,7 @@
 package com.homektv.library;
 
 import com.homektv.domain.SongFile;
+import com.homektv.media.ExternalProcessRunner;
 import com.homektv.repo.SongFileRepository;
 import com.homektv.web.ApiException;
 import org.springframework.stereotype.Service;
@@ -12,9 +13,18 @@ import java.util.List;
 /** Creates a TV-compatible H.264/AAC derivative without touching the source file. */
 @Service
 public class TranscodeService {
-    private final SongFileRepository files;
 
-    public TranscodeService(SongFileRepository files) { this.files = files; }
+    /** TV 兼容副本转码的硬超时，避免卡死进程占用后台线程。 */
+    static final java.time.Duration TRANSCODE_TIMEOUT = java.time.Duration.ofMinutes(120);
+
+    private final SongFileRepository files;
+    private final String ffmpegPath;
+
+    public TranscodeService(SongFileRepository files,
+                            @org.springframework.beans.factory.annotation.Value("${app.transcode.ffmpeg-path:ffmpeg}") String ffmpegPath) {
+        this.files = files;
+        this.ffmpegPath = ffmpegPath;
+    }
 
     public Result transcodeSong(Long songId) {
         List<SongFile> sources = files.findBySongIdOrderByPriorityDesc(songId);
@@ -32,14 +42,23 @@ public class TranscodeService {
             throw new ApiException("TRANSCODE_FAILED", e.getMessage());
         }
         try {
-            Process process = new ProcessBuilder("ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            java.util.List<String> command = java.util.List.of(
+                    ffmpegPath, "-hide_banner", "-loglevel", "error", "-y",
                     "-i", input.toString(), "-map", "0:v:0?", "-map", "0:a?",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", "-profile:v", "high",
-                    "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-c:s", "copy", output.toString())
-                    .redirectErrorStream(true).start();
-            String log = new String(process.getInputStream().readAllBytes());
-            int code = process.waitFor();
-            if (code != 0 || !Files.isReadable(output)) throw new ApiException("TRANSCODE_FAILED", log);
+                    "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-c:s", "copy", output.toString());
+            ExternalProcessRunner.Result result = ExternalProcessRunner.run(
+                    "TV 兼容转码", command, input, TRANSCODE_TIMEOUT);
+            if (result.timedOut()) {
+                throw new ApiException("TRANSCODE_FAILED",
+                        "转码超时（" + TRANSCODE_TIMEOUT.toMinutes() + "分钟），已终止 FFmpeg 进程");
+            }
+            if (result.cancelled()) {
+                throw new ApiException("TRANSCODE_INTERRUPTED", "转码已取消");
+            }
+            if (result.exitCode() != 0 || !Files.isReadable(output)) {
+                throw new ApiException("TRANSCODE_FAILED", result.diagnostic());
+            }
             SongFile derivative = existing != null ? existing : new SongFile();
             derivative.setSongId(source.getSongId());
             derivative.setFilePath(output.toString());

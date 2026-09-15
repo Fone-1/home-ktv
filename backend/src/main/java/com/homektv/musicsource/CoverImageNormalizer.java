@@ -1,5 +1,6 @@
 package com.homektv.musicsource;
 
+import com.homektv.media.ExternalProcessRunner;
 import com.homektv.web.ApiException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -13,16 +14,16 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Iterator;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 @Component
 class CoverImageNormalizer {
     private static final int MAX_DIMENSION = 8_192;
     private static final long MAX_PIXELS = 4_096L * 4_096L;
     private static final int MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
-    private static final long CONVERT_TIMEOUT_SECONDS = 20;
+    private static final Duration CONVERT_TIMEOUT = Duration.ofSeconds(20);
 
     private final String ffmpegPath;
 
@@ -39,24 +40,21 @@ class CoverImageNormalizer {
     private byte[] convertWithFfmpeg(byte[] source) {
         Path input = null;
         Path output = null;
-        Process process = null;
         try {
             input = Files.createTempFile("home-ktv-cover-", ".image");
             output = Files.createTempFile("home-ktv-cover-", ".jpg");
             Files.write(input, source);
-            process = new ProcessBuilder(List.of(
-                    ffmpegPath, "-hide_banner", "-loglevel", "error", "-y",
-                    "-i", input.toString(), "-frames:v", "1",
-                    "-vf", "scale=4096:4096:force_original_aspect_ratio=decrease",
-                    "-q:v", "2", output.toString()))
-                    .redirectErrorStream(true)
-                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                    .start();
-            if (!process.waitFor(CONVERT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                process.destroyForcibly();
-                throw invalid("封面格式转换超时");
-            }
-            if (process.exitValue() != 0 || !Files.isReadable(output)) {
+            ExternalProcessRunner.Result result = ExternalProcessRunner.run(
+                    "封面格式转换",
+                    List.of(ffmpegPath, "-hide_banner", "-loglevel", "error", "-y",
+                            "-i", input.toString(), "-frames:v", "1",
+                            "-vf", "scale=4096:4096:force_original_aspect_ratio=decrease",
+                            "-q:v", "2", output.toString()),
+                    input,
+                    CONVERT_TIMEOUT);
+            if (result.timedOut()) throw invalid("封面格式转换超时");
+            if (result.cancelled()) throw invalid("封面格式转换被中断");
+            if (result.exitCode() != 0 || !Files.isReadable(output)) {
                 throw invalid("封面格式无法识别或转换");
             }
             long size = Files.size(output);
@@ -73,7 +71,6 @@ class CoverImageNormalizer {
         } catch (IOException ex) {
             throw invalid("封面格式无法识别或转换");
         } finally {
-            if (process != null && process.isAlive()) process.destroyForcibly();
             deleteQuietly(input);
             deleteQuietly(output);
         }

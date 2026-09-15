@@ -24,8 +24,15 @@ COPY . .
 
 ENV PYTHONUNBUFFERED=1 \
     UVR_PORT=8900 \
+    UVR_QUEUE_SIZE=8 \
+    UVR_RETENTION_HOURS=6 \
+    UVR_CLEANUP_INTERVAL_SEC=1800 \
+    UVR_WORKERS=0 \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+# UVR_WORKERS=0 表示自动推导：GPU 固定 1 个 worker，CPU 取核数一半（最多 4）。
+# 需要手动限流时在 docker-compose 中覆盖该值。
 
 EXPOSE 8900
 

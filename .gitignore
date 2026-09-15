@@ -48,3 +48,8 @@ start-h5.bat
 # ===== Python =====
 __pycache__/
 *.pyc
+
+# ===== AI 服务运行时数据 =====
+# 上传音频、分离产物与任务快照属运行时数据且可能含用户素材，禁止入库
+ai-service/jobs/
+ai-service/models/*.onnx

@@ -29,15 +29,25 @@ public class PlaybackService {
     private final SongRepository songRepo;
     private final PlayHistoryRepository historyRepo;
     private final SongFileRepository fileRepo;
+    private final com.homektv.library.StandbyContentCache standbyCache;
 
     public PlaybackService(PlayerStateRepository playerRepo, QueueItemRepository queueRepo,
                            SongRepository songRepo, PlayHistoryRepository historyRepo,
                            SongFileRepository fileRepo) {
+        // 兼容旧手工构造（单元测试）：使用独立缓存实例，行为一致
+        this(playerRepo, queueRepo, songRepo, historyRepo, fileRepo, new com.homektv.library.StandbyContentCache());
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public PlaybackService(PlayerStateRepository playerRepo, QueueItemRepository queueRepo,
+                           SongRepository songRepo, PlayHistoryRepository historyRepo,
+                           SongFileRepository fileRepo, com.homektv.library.StandbyContentCache standbyCache) {
         this.playerRepo = playerRepo;
         this.queueRepo = queueRepo;
         this.songRepo = songRepo;
         this.historyRepo = historyRepo;
         this.fileRepo = fileRepo;
+        this.standbyCache = standbyCache;
     }
 
     /** 开始/恢复播放。若当前无曲目，尝试从队列取第一首。 */
@@ -239,6 +249,8 @@ public class PlaybackService {
                         s.setPlayCount(s.getPlayCount() + 1);
                         songRepo.save(s);
                     });
+                    // 播放完成会改变热门排行与最近播放，失效待机内容短缓存
+                    standbyCache.evict();
                 }
             }
         });

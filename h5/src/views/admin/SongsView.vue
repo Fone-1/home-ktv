@@ -175,6 +175,31 @@
             <div :style="{ width: batchProgress.progress + '%', background:'var(--gold)', height:'100%', transition:'width 0.3s' }"></div>
           </div>
         </div>
+
+        <!-- 双轨任务列表：单曲与批次各自独立，失败原因可见并可取消/重试 -->
+        <div v-if="convertTasks.length" class="convert-task-list">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <span style="font-size:12px; color:var(--dim);">转换任务（含单曲提交）</span>
+            <span class="link dim" @click="loadConvertTasks">刷新</span>
+          </div>
+          <div v-for="t in convertTasks" :key="t.id" class="convert-task-row">
+            <div class="ct-main">
+              <span class="ct-title">{{ t.title || ('歌曲#' + t.songId) }}</span>
+              <span class="ct-meta">
+                {{ t.origin === 'BATCH' ? '批次' : '单曲' }} · {{ t.engine }}
+                <template v-if="t.errorMessage"> · <span class="ct-error">{{ t.errorMessage }}</span></template>
+              </span>
+            </div>
+            <span class="ct-status" :class="'st-' + t.status.toLowerCase()">{{ convertStatusText(t.status) }}</span>
+            <span class="ct-actions">
+              <button v-if="!isConvertTerminal(t.status) && t.status !== 'COMPLETED'"
+                      class="link" @click="cancelConvertTask(t.id)">取消</button>
+              <button v-if="t.status === 'FAILED' || t.status === 'CANCELLED'"
+                      class="link" @click="retryConvertTask(t.id)">重试</button>
+            </span>
+          </div>
+        </div>
+
         <div class="mr">
           <button class="btn ghost" @click="batchOpen = false">关闭</button>
           <button class="btn" @click="applyBatchConvert" :disabled="batchSubmitting">{{ batchSubmitting ? '已提交后台' : '开始批量转换' }}</button>
@@ -240,6 +265,7 @@ const batchOpen = ref(false)
 const batchSubmitting = ref(false)
 const batchForm = reactive({ mode: 'AI', concurrency: 1 })
 const batchProgress = ref(null)
+const convertTasks = ref([])
 let batchTimer = null
 /** 是否全选当前页 / Whether all songs on current page are selected */
 const allSelected = computed(() => songs.value.length > 0 && songs.value.every(song => selected.value.has(song.id)))
@@ -439,6 +465,7 @@ async function pollBatchProgress() {
     try {
       const res = await api.getSongConvertProgress()
       batchProgress.value = res.data || res
+      await loadConvertTasks()
       if (!batchProgress.value?.running && batchTimer) {
         clearInterval(batchTimer)
         batchTimer = null
@@ -448,6 +475,42 @@ async function pollBatchProgress() {
   }
   await query()
   batchTimer = setInterval(query, 2000)
+}
+
+/** 加载双轨任务列表（单曲与批次各自独立） */
+async function loadConvertTasks() {
+  try {
+    const res = await api.getSongConvertTasks(20)
+    convertTasks.value = Array.isArray(res) ? [] : (res.data || [])
+  } catch (ignored) {}
+}
+
+/** 任务是否已结束（含完成/失败/取消） */
+function isConvertTerminal(status) { return ['COMPLETED', 'FAILED', 'CANCELLED'].includes(status) }
+
+/** 双轨任务状态中文标签 */
+function convertStatusText(status) {
+  return { QUEUED: '排队中', RUNNING: '转换中', COMPLETED: '已完成', FAILED: '失败', CANCELLED: '已取消' }[status] || status
+}
+
+/** 取消双轨任务 */
+async function cancelConvertTask(taskId) {
+  try {
+    await api.cancelSongConvertTask(taskId)
+    await loadConvertTasks()
+  } catch (error) {
+    await alertDialog(error.message || '取消失败')
+  }
+}
+
+/** 重试双轨任务 */
+async function retryConvertTask(taskId) {
+  try {
+    await api.retrySongConvertTask(taskId)
+    await loadConvertTasks()
+  } catch (error) {
+    await alertDialog(error.message || '重试失败')
+  }
 }
 
 // —— 工具函数 / Utility functions ——
@@ -497,5 +560,18 @@ function shortMd5(v) { return v ? `${v.slice(0, 8)}...${v.slice(-8)}` : '—' }
 .modal input, .modal textarea, .modal select { width: 100%; margin-top: 6px; background: var(--panel2); border: 1px solid var(--glass-border);
   border-radius: 8px; padding: 8px 10px; color: var(--text); font-size: 13px; }
 .mr { display: flex; gap: 10px; justify-content: flex-end; margin-top: 8px; }
-.reparse-modal { width: min(760px, 90vw); max-height: 82vh; display: flex; flex-direction: column; }.rule-row { display:flex;align-items:center;gap:18px;margin-bottom:12px }.rule-row label { margin:0;display:flex;align-items:center;gap:5px }.rule-row .btn { margin-left:auto }.preview-list { overflow:auto;border:1px solid var(--line);border-radius:10px;padding:0 12px;min-height:100px }.preview-item { padding:10px 0;border-bottom:1px solid var(--line) }.preview-item:last-child { border-bottom:0 }.preview-item.bad { opacity:.55 }.filename { color:var(--dim2);font-size:11px;margin-bottom:5px }.change { display:grid;grid-template-columns:1fr 25px 1fr;gap:7px;align-items:center;font-size:12px }.change b { color:var(--gold);text-align:center }.summary { margin-right:auto;color:var(--dim);font-size:12px;align-self:center }
+.reparse-modal { width: min(760px, 90vw); max-height: 82vh; display: flex; flex-direction: column; }
+.convert-task-list { margin: 12px 0; max-height: 200px; overflow-y: auto; border: 1px solid var(--glass-border); border-radius: 8px; padding: 8px; }
+.convert-task-row { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.convert-task-row:last-child { border-bottom: 0; }
+.ct-main { flex: 1; min-width: 0; }
+.ct-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ct-meta { display: block; color: var(--dim2); font-size: 11px; }
+.ct-error { color: #ffb4b4; }
+.ct-status { flex: none; padding: 2px 7px; border-radius: 4px; font-size: 11px; background: rgba(255,255,255,.08); }
+.ct-status.st-running { background: var(--gold-glow); color: var(--gold); }
+.ct-status.st-completed { background: rgba(34,197,94,.16); color: #86efac; }
+.ct-status.st-failed { background: rgba(239,68,68,.16); color: #fca5a5; }
+.ct-actions { flex: none; display: flex; gap: 8px; }
+.rule-row { display:flex;align-items:center;gap:18px;margin-bottom:12px }.rule-row label { margin:0;display:flex;align-items:center;gap:5px }.rule-row .btn { margin-left:auto }.preview-list { overflow:auto;border:1px solid var(--line);border-radius:10px;padding:0 12px;min-height:100px }.preview-item { padding:10px 0;border-bottom:1px solid var(--line) }.preview-item:last-child { border-bottom:0 }.preview-item.bad { opacity:.55 }.filename { color:var(--dim2);font-size:11px;margin-bottom:5px }.change { display:grid;grid-template-columns:1fr 25px 1fr;gap:7px;align-items:center;font-size:12px }.change b { color:var(--gold);text-align:center }.summary { margin-right:auto;color:var(--dim);font-size:12px;align-self:center }
 </style>

@@ -221,6 +221,12 @@ export const api = {
     request('/songs/batch-convert-dual-track', { method: 'POST', body: JSON.stringify(data) }),
   getSongConvertProgress: () =>
     request('/songs/convert-progress'),
+  getSongConvertTasks: (limit = 50) =>
+    request(`/songs/convert-tasks?limit=${limit}`),
+  cancelSongConvertTask: (taskId) =>
+    request(`/songs/convert-tasks/${taskId}/cancel`, { method: 'POST' }),
+  retrySongConvertTask: (taskId) =>
+    request(`/songs/convert-tasks/${taskId}/retry`, { method: 'POST' }),
   rollbackSongDualTrack: (songId) =>
     request(`/songs/${songId}/rollback-dual-track`, { method: 'POST' })
 }

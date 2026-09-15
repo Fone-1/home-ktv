@@ -1,5 +1,6 @@
 package com.homektv.dualtrack;
 
+import com.homektv.media.ExternalProcessRunner;
 import com.homektv.web.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,9 +14,9 @@ import java.net.URI;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 /**
  * 远程深度学习 AI 人声分离引擎客户端。
@@ -25,6 +26,9 @@ import java.util.concurrent.TimeUnit;
 public class RemoteAiVocalSeparationEngine implements VocalSeparationEngine {
 
     private static final Logger log = LoggerFactory.getLogger(RemoteAiVocalSeparationEngine.class);
+
+    /** 抽取输入音频的超时上限。 */
+    private static final Duration EXTRACT_AUDIO_TIMEOUT = Duration.ofMinutes(5);
 
     private final String ffmpegPath;
 
@@ -93,9 +97,10 @@ public class RemoteAiVocalSeparationEngine implements VocalSeparationEngine {
                 "-ac", "2",
                 targetWav.toAbsolutePath().toString()
         );
-        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-        boolean finished = process.waitFor(60, TimeUnit.SECONDS);
-        if (!finished || process.exitValue() != 0 || !Files.exists(targetWav) || Files.size(targetWav) == 0) {
+        ExternalProcessRunner.Result result = ExternalProcessRunner.run(
+                "抽取 AI 分离输入音频", command, inputMedia, EXTRACT_AUDIO_TIMEOUT);
+        if (result.timedOut() || result.cancelled() || result.exitCode() != 0
+                || !Files.exists(targetWav) || Files.size(targetWav) == 0) {
             throw new ApiException("EXTRACT_AUDIO_FAILED", "抽取原始音频流失败，无法提交 AI 分离");
         }
     }

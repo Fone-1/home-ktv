@@ -7,8 +7,12 @@ import com.homektv.web.dto.SongDto;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.OffsetDateTime;
-import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * 发现类 API（P3.4）：点唱排行 / 最新入库。供 H5 首页热榜与分类使用。
@@ -41,14 +45,20 @@ public class DiscoveryController {
     public List<SongDto> ranking(@RequestParam(defaultValue = "30") int days) {
         OffsetDateTime since = OffsetDateTime.now().minusDays(days);
         List<Object[]> rows = historyRepo.ranking(since, 20);
-        List<SongDto> out = new ArrayList<>();
-        for (Object[] row : rows) {
-            Long songId = ((Number) row[0]).longValue();
-            songRepo.findById(songId)
-                    .filter(s -> "ok".equals(s.getStatus()))
-                    .ifPresent(s -> out.add(SongDto.from(s)));
-        }
-        return out;
+        // 排行只返回 songId/cnt：先收集去重 ID，再一次性批量加载，避免逐条 findById（N+1）
+        Set<Long> songIds = rows.stream()
+                .map(row -> ((Number) row[0]).longValue())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (songIds.isEmpty()) return List.of();
+        Map<Long, Song> loaded = songRepo.findAllById(songIds).stream()
+                .filter(s -> "ok".equals(s.getStatus()))
+                .collect(Collectors.toMap(Song::getId, Function.identity(), (a, b) -> a));
+        // 保持排行顺序输出
+        return songIds.stream()
+                .map(loaded::get)
+                .filter(s -> s != null)
+                .map(SongDto::from)
+                .toList();
     }
 
     /**

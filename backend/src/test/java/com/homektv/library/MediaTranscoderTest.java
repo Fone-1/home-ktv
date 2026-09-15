@@ -1,12 +1,12 @@
 package com.homektv.library;
 
+import com.homektv.support.FakeExecutable;
 import com.homektv.web.ApiException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -18,9 +18,8 @@ class MediaTranscoderTest {
 
     @Test
     void removesPartialOutputWhenFfmpegFails() throws Exception {
-        Path ffmpeg = temp.resolve("fake-ffmpeg.sh");
-        Files.writeString(ffmpeg, "#!/bin/sh\nfor last; do :; done\nprintf partial > \"$last\"\nexit 1\n");
-        Files.setPosixFilePermissions(ffmpeg, PosixFilePermissions.fromString("rwx------"));
+        // 假 ffmpeg 会先写出部分产物再以 1 退出，验证失败时不会留下半成品
+        Path ffmpeg = FakeExecutable.failingWriter(temp, "fake-ffmpeg");
         Path source = temp.resolve("source.mpg");
         Path output = temp.resolve("output.mkv");
         Files.writeString(source, "source");

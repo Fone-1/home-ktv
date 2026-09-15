@@ -8,9 +8,9 @@ import com.homektv.config.AppProperties;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.util.concurrent.TimeUnit;
+import java.time.Duration;
+import java.util.List;
 
 /**
  * 通过 ProcessBuilder 调用 ffprobe 探测媒体文件（P0.7）。
@@ -25,6 +25,9 @@ public class FFprobeService {
 
     private static final Logger log = LoggerFactory.getLogger(FFprobeService.class);
 
+    /** 单文件探测超时；网络盘/大文件也应在该时间内返回。 */
+    private static final Duration PROBE_TIMEOUT = Duration.ofSeconds(30);
+
     private final String ffprobePath;
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -38,7 +41,7 @@ public class FFprobeService {
      * @throws MediaProbeException 探测失败（进程异常、超时、非媒体文件等）
      */
     public MediaProbe probe(Path file) {
-        ProcessBuilder pb = new ProcessBuilder(
+        List<String> command = List.of(
                 ffprobePath,
                 "-v", "error",
                 "-print_format", "json",
@@ -46,34 +49,29 @@ public class FFprobeService {
                 "-show_streams",
                 file.toString()
         );
-        pb.redirectErrorStream(false);
 
-        Process process;
+        ExternalProcessRunner.Result result;
         try {
-            process = pb.start();
+            // stdout/stderr 分离：stdout 必须是干净 JSON，不能被 ffprobe 的错误输出污染
+            result = ExternalProcessRunner.runSplit("ffprobe 探测", command, file, PROBE_TIMEOUT);
         } catch (IOException e) {
             throw new MediaProbeException("无法启动 ffprobe（请确认已安装并在 PATH 中）：" + ffprobePath, e);
-        }
-
-        try {
-            String stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-            String stderr = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
-
-            boolean finished = process.waitFor(30, TimeUnit.SECONDS);
-            if (!finished) {
-                process.destroyForcibly();
-                throw new MediaProbeException("ffprobe 探测超时：" + file);
-            }
-            if (process.exitValue() != 0) {
-                throw new MediaProbeException("ffprobe 探测失败（exit=" + process.exitValue() + "）：" + stderr.trim());
-            }
-            return parse(stdout);
-        } catch (IOException e) {
-            throw new MediaProbeException("读取 ffprobe 输出失败：" + file, e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new MediaProbeException("ffprobe 探测被中断：" + file, e);
         }
+
+        if (result.timedOut()) {
+            throw new MediaProbeException("ffprobe 探测超时（" + PROBE_TIMEOUT.toSeconds() + "秒）：" + file);
+        }
+        if (result.cancelled()) {
+            throw new MediaProbeException("ffprobe 探测已取消：" + file);
+        }
+        if (result.exitCode() != 0) {
+            throw new MediaProbeException("ffprobe 探测失败（exit=" + result.exitCode() + "）："
+                    + result.diagnostic());
+        }
+        return parse(result.stdout());
     }
 
     MediaProbe parse(String json) {

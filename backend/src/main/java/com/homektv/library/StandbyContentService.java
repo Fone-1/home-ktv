@@ -12,6 +12,8 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.time.OffsetDateTime;
 import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 public class StandbyContentService {
@@ -19,16 +21,28 @@ public class StandbyContentService {
     private final SongRepository songRepository;
     private final PlayHistoryRepository historyRepository;
     private final AssetWriter assetWriter;
+    private final StandbyContentCache cache;
 
     public StandbyContentService(SettingService settingService, SongRepository songRepository,
-                                 PlayHistoryRepository historyRepository, AssetWriter assetWriter) {
+                                 PlayHistoryRepository historyRepository, AssetWriter assetWriter,
+                                 StandbyContentCache cache) {
         this.settingService = settingService;
         this.songRepository = songRepository;
         this.historyRepository = historyRepository;
         this.assetWriter = assetWriter;
+        this.cache = cache;
     }
 
     public Map<String, Object> content() {
+        // TV 端高频轮询：命中 15 秒短缓存时直接返回，歌曲入库/播放完成/设置变更会主动失效
+        Map<String, Object> cached = cache.get();
+        if (cached != null) return cached;
+        Map<String, Object> result = buildContent();
+        cache.put(result);
+        return result;
+    }
+
+    private Map<String, Object> buildContent() {
         Map<String, Object> settings = settingService.getAll();
         String source = string(settings, "standby_source", "mixed");
         List<Song> songs = switch (source) {
@@ -70,12 +84,16 @@ public class StandbyContentService {
         }
     }
 
+    /** 热门歌曲：排行聚合只取 ID，再按排行顺序一次性批量加载歌曲实体，禁止逐条 findById。 */
     private List<Song> hotSongs() {
-        List<Song> songs = new ArrayList<>();
-        for (Object[] row : historyRepository.ranking(OffsetDateTime.now().minusDays(3650), 20)) {
-            songRepository.findById(((Number) row[0]).longValue()).filter(this::valid).ifPresent(songs::add);
-        }
-        return songs;
+        List<Object[]> rows = historyRepository.ranking(OffsetDateTime.now().minusDays(3650), 20);
+        List<Long> ids = rows.stream().map(row -> ((Number) row[0]).longValue()).toList();
+        if (ids.isEmpty()) return List.of();
+        Map<Long, Song> loaded = songRepository.findAllById(ids).stream()
+                .filter(this::valid)
+                .collect(Collectors.toMap(Song::getId, Function.identity(), (a, b) -> a));
+        // 保持排行顺序（cnt 降序）
+        return ids.stream().map(loaded::get).filter(Objects::nonNull).toList();
     }
 
     private List<Song> newSongs() {
@@ -89,14 +107,18 @@ public class StandbyContentService {
         return songs.values().stream().limit(20).toList();
     }
 
+    /** 自定义待机歌曲：按 ID 批量加载，同时严格保持用户配置的 ID 顺序。 */
     private List<Song> customSongs(Object value) {
         if (!(value instanceof List<?> ids)) return List.of();
-        List<Song> songs = new ArrayList<>();
-        for (Object id : ids) {
-            if (!(id instanceof Number number)) continue;
-            songRepository.findById(number.longValue()).filter(this::valid).ifPresent(songs::add);
-        }
-        return songs;
+        List<Long> wanted = ids.stream()
+                .filter(id -> id instanceof Number)
+                .map(id -> ((Number) id).longValue())
+                .toList();
+        if (wanted.isEmpty()) return List.of();
+        Map<Long, Song> loaded = songRepository.findAllById(wanted).stream()
+                .filter(this::valid)
+                .collect(Collectors.toMap(Song::getId, Function.identity(), (a, b) -> a));
+        return wanted.stream().map(loaded::get).filter(Objects::nonNull).toList();
     }
 
     private boolean valid(Song song) { return "ok".equals(song.getStatus()); }

@@ -37,6 +37,7 @@ public class DualTrackConvertServiceTest {
     private RemoteAiVocalSeparationEngine remoteAiEngine;
     private DualTrackRemuxer remuxer;
     private WsBroadcaster wsBroadcaster;
+    private com.homektv.repo.DualTrackTaskRepository taskRepo;
 
     private DualTrackConvertService service;
 
@@ -50,6 +51,9 @@ public class DualTrackConvertServiceTest {
         remoteAiEngine = mock(RemoteAiVocalSeparationEngine.class);
         remuxer = mock(DualTrackRemuxer.class);
         wsBroadcaster = mock(WsBroadcaster.class);
+        taskRepo = mock(com.homektv.repo.DualTrackTaskRepository.class);
+        when(taskRepo.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(taskRepo.findTop50ByOrderByCreatedAtDesc()).thenReturn(List.of());
 
         when(settingService.dualTrackPolicy()).thenReturn(
                 new SettingService.DualTrackPolicy("DSP", "", "", 1, false, "192k")
@@ -57,7 +61,7 @@ public class DualTrackConvertServiceTest {
 
         service = new DualTrackConvertService(
                 songRepo, fileRepo, settingService, ffprobeService,
-                dspEngine, remoteAiEngine, remuxer, wsBroadcaster
+                dspEngine, remoteAiEngine, remuxer, wsBroadcaster, taskRepo
         );
     }
 

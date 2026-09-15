@@ -63,6 +63,22 @@ public class MvDownloadTask {
     @Column(name = "auto_convert_dual_track", nullable = false)
     private boolean autoConvertDualTrack = false;
 
+    /** 远端 ETag：断点续传时校验文件是否变化。 */
+    @Column(name = "etag")
+    private String etag;
+
+    /** 远端 Last-Modified：ETag 缺失时的断点校验依据。 */
+    @Column(name = "last_modified")
+    private String lastModified;
+
+    /** 下载起点：FRESH 全新 / RESUMED 断点续传 / RESTARTED 断点失效后重下。 */
+    @Column(name = "resume_state")
+    private String resumeState;
+
+    /** 网络失败自动重试次数。 */
+    @Column(name = "retry_count", nullable = false)
+    private int retryCount = 0;
+
     @Column(name = "error_message")
     private String errorMessage;
 
@@ -108,6 +124,14 @@ public class MvDownloadTask {
     public void setSongId(Long songId) { this.songId = songId; }
     public boolean isAutoConvertDualTrack() { return autoConvertDualTrack; }
     public void setAutoConvertDualTrack(boolean autoConvertDualTrack) { this.autoConvertDualTrack = autoConvertDualTrack; }
+    public String getEtag() { return etag; }
+    public void setEtag(String etag) { this.etag = etag; }
+    public String getLastModified() { return lastModified; }
+    public void setLastModified(String lastModified) { this.lastModified = lastModified; }
+    public String getResumeState() { return resumeState; }
+    public void setResumeState(String resumeState) { this.resumeState = resumeState; }
+    public int getRetryCount() { return retryCount; }
+    public void setRetryCount(int retryCount) { this.retryCount = retryCount; }
     public String getErrorMessage() { return errorMessage; }
     public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
     public OffsetDateTime getCreatedAt() { return createdAt; }

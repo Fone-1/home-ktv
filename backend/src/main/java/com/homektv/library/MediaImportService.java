@@ -130,11 +130,31 @@ public class MediaImportService {
     public record AutoCleanupResult(int scanned, int eligible, int deleted, int skipped, int failed) {}
 
     public synchronized SourceScanResult scanSourceLibrary() {
+        return scanSourceLibrary(null);
+    }
+
+    /**
+     * 扫描源曲库。targetFile 非空时只处理该文件（下载完成后的增量入库），
+     * 全量扫描仅在用户主动执行「全量扫描」时调用。
+     */
+    public synchronized SourceScanResult scanSourceLibrary(Path targetFile) {
         Path sourceRoot = sourceRoot();
         Path targetRoot = targetRoot();
         ensureDirectories(sourceRoot, targetRoot);
 
-        List<Path> files = mediaFiles(sourceRoot);
+        List<Path> files;
+        if (targetFile != null) {
+            Path normalized = targetFile.toAbsolutePath().normalize();
+            if (!normalized.startsWith(sourceRoot)) {
+                throw new ApiException("SOURCE_OUTSIDE_LIBRARY", "增量入库文件不在扫描源目录内：" + normalized);
+            }
+            if (!Files.isRegularFile(normalized) || !LibraryScanService.isMediaFile(normalized)) {
+                throw new ApiException("SOURCE_FILE_MISSING", "增量入库文件不存在或不是媒体文件：" + normalized);
+            }
+            files = List.of(normalized);
+        } else {
+            files = mediaFiles(sourceRoot);
+        }
         OffsetDateTime startedAt = OffsetDateTime.now();
         scanProgress.set(new SourceScanProgress(true, files.size(), 0, null, 0, 0, 0, 0, 0, 0,
                 startedAt, null));

@@ -7,13 +7,16 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.TimeUnit;
 
 @Service
 public class TranscodeHardwareService {
+
+    /** 硬件加速探针超时：编一帧 128x128 远小于该值。 */
+    private static final Duration PROBE_TIMEOUT = Duration.ofSeconds(15);
 
     private final Path driRoot;
     private final Path drmSysRoot;
@@ -114,13 +117,10 @@ public class TranscodeHardwareService {
 
     boolean run(List<String> command) {
         try {
-            Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-            boolean finished = process.waitFor(15, TimeUnit.SECONDS);
-            if (!finished) {
-                process.destroyForcibly();
-                return false;
-            }
-            return process.exitValue() == 0;
+            // 探针命令只关心退出码，超时即视为该加速器不可用
+            return com.homektv.media.ExternalProcessRunner
+                    .run("硬件加速探针", command, null, PROBE_TIMEOUT)
+                    .ok();
         } catch (IOException e) {
             return false;
         } catch (InterruptedException e) {

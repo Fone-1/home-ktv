@@ -87,11 +87,19 @@ public class MvDownloadController {
     }
 
     /**
-     * 查询所有下载任务
+     * 分页查询下载任务，支持状态和时间范围过滤。
+     * 未传参数时默认返回活动任务和最近 7 天历史。
      */
     @GetMapping("/tasks")
-    public List<MvDownloadTaskDto> tasks() {
-        return downloadService.listTasks();
+    public Map<String, Object> tasks(@RequestParam(required = false) String status,
+                                     @RequestParam(required = false) String since,
+                                     @RequestParam(defaultValue = "0") int page,
+                                     @RequestParam(defaultValue = "50") int size) {
+        java.time.OffsetDateTime from = null;
+        if (since != null && !since.isBlank()) {
+            from = java.time.OffsetDateTime.parse(since);
+        }
+        return downloadService.listTasksPage(status, from, page, size);
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.homektv.library;
 
+import com.homektv.media.ExternalProcessRunner;
 import com.homektv.web.ApiException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -7,11 +8,15 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
 @Service
 public class MediaTranscoder {
+
+    /** 全片转码可能耗时较长，但仍需有硬上限，避免卡死的 FFmpeg 永久占用转码队列。 */
+    static final Duration TRANSCODE_TIMEOUT = Duration.ofMinutes(120);
 
     private final TranscodeHardwareService hardwareService;
     private final String ffmpegPath;
@@ -50,12 +55,18 @@ public class MediaTranscoder {
 
         boolean completed = false;
         try {
-            Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-            String log = new String(process.getInputStream().readAllBytes());
-            int code = process.waitFor();
-            if (code != 0 || !Files.isReadable(output) || Files.size(output) == 0) {
+            ExternalProcessRunner.Result result = ExternalProcessRunner.run(
+                    "转码", command, source, TRANSCODE_TIMEOUT);
+            if (result.timedOut()) {
                 throw new ApiException(hardware ? "HARDWARE_TRANSCODE_FAILED" : "TRANSCODE_FAILED",
-                        log.isBlank() ? "ffmpeg 转码失败" : log);
+                        "转码超时（" + TRANSCODE_TIMEOUT.toMinutes() + "分钟），已终止 FFmpeg 进程");
+            }
+            if (result.cancelled()) {
+                throw new ApiException("TRANSCODE_INTERRUPTED", "转码已取消");
+            }
+            if (result.exitCode() != 0 || !Files.isReadable(output) || Files.size(output) == 0) {
+                throw new ApiException(hardware ? "HARDWARE_TRANSCODE_FAILED" : "TRANSCODE_FAILED",
+                        result.diagnostic().isBlank() ? "ffmpeg 转码失败" : result.diagnostic());
             }
             completed = true;
             return output;

@@ -70,10 +70,18 @@ public class SettingService {
 
     private final SettingRepository repo;
     private final ObjectMapper mapper;
+    private final StandbyContentCache standbyCache;
 
     public SettingService(SettingRepository repo, ObjectMapper mapper) {
+        // 兼容旧手工构造（单元测试）：使用独立缓存实例，行为一致
+        this(repo, mapper, new StandbyContentCache());
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public SettingService(SettingRepository repo, ObjectMapper mapper, StandbyContentCache standbyCache) {
         this.repo = repo;
         this.mapper = mapper;
+        this.standbyCache = standbyCache;
     }
 
     /** 读取全部设置为 map（value 反序列化为对象） */
@@ -120,6 +128,8 @@ public class SettingService {
             s.setValue(write(v));
             repo.save(s);
         });
+        // 设置变更（待机来源/自定义歌曲/文案等）可能影响待机内容，直接失效短缓存
+        standbyCache.evict();
     }
 
     private void validateKeyValue(String key, Object value) {

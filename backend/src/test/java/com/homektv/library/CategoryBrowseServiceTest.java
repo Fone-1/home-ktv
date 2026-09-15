@@ -9,6 +9,7 @@ import org.mockito.Mockito;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 class CategoryBrowseServiceTest {
@@ -23,6 +24,8 @@ class CategoryBrowseServiceTest {
         Song audio = createSong("后来", "刘若英", "AUDIO", "未知", null);
 
         when(songRepo.findAll()).thenReturn(List.of(ktv, mv, audio));
+        when(songRepo.findByStatus("ok")).thenReturn(List.of());
+        when(songRepo.findBrowseSongs(any(), any(), any(), any())).thenReturn(List.of());
 
         List<SongDto> result = service.songs(null, null, null, null, null, "KTV_VIDEO", "hot", 100);
         assertThat(result).extracting(SongDto::title).containsExactly("晴天");
@@ -42,6 +45,8 @@ class CategoryBrowseServiceTest {
         song3.lockMetadata("vocalForm");
 
         when(songRepo.findAll()).thenReturn(List.of(song1, song2, song3));
+        when(songRepo.findByStatus("ok")).thenReturn(List.of());
+        when(songRepo.findBrowseSongs(any(), any(), any(), any())).thenReturn(List.of());
 
         List<SongDto> result = service.songs(null, null, null, null, "对唱", null, "hot", 100);
         assertThat(result).extracting(SongDto::title).containsExactlyInAnyOrder("屋顶", "千里之外");
@@ -54,6 +59,8 @@ class CategoryBrowseServiceTest {
 
         Song ktv = createSong("晴天", "周杰伦", "KTV_VIDEO", "未知", null);
         when(songRepo.findAll()).thenReturn(List.of(ktv));
+        when(songRepo.findByStatus("ok")).thenReturn(List.of());
+        when(songRepo.findBrowseSongs(any(), any(), any(), any())).thenReturn(List.of());
 
         List<SongDto> result = service.songs(null, null, null, null, null, "INVALID_TYPE", "hot", 100);
         assertThat(result).isEmpty();

@@ -10,6 +10,7 @@ import com.homektv.domain.SongFile;
 import com.homektv.library.MediaImportService;
 import com.homektv.library.LibraryScanService;
 import com.homektv.library.SettingService;
+import com.homektv.media.ExternalProcessRunner;
 import com.homektv.queue.QueueService;
 import com.homektv.repo.MediaImportRecordRepository;
 import com.homektv.repo.MvDownloadTaskRepository;
@@ -26,6 +27,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 
@@ -40,6 +43,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.concurrent.*;
 
@@ -55,6 +59,12 @@ public class MvDownloadService {
 
     private static final Logger log = LoggerFactory.getLogger(MvDownloadService.class);
     private static final int BUFFER_SIZE = 64 * 1024; // 64KB 缓冲区
+    /** 单个流的自动重试上限（断点续传使重试成本很低）。 */
+    private static final int DOWNLOAD_MAX_ATTEMPTS = 3;
+    /** 重试退避基数，按次数线性增长。 */
+    private static final long RETRY_BACKOFF_MS = 2_000L;
+    /** DASH 合流为 stream copy，5 分钟足够。 */
+    private static final Duration MERGE_TIMEOUT = Duration.ofMinutes(5);
 
     private final Map<MvProvider, MvSearchProvider> providerMap = new EnumMap<>(MvProvider.class);
     private final MvDownloadTaskRepository taskRepo;
@@ -216,8 +226,41 @@ public class MvDownloadService {
     }
 
     public List<MvDownloadTaskDto> listTasks() {
-        return taskRepo.findAllByOrderByCreatedAtDesc().stream().map(MvDownloadTaskDto::from).toList();
+        return listTasks(null, null, 0, 50).getContent().stream().map(MvDownloadTaskDto::from).toList();
     }
+
+    /**
+     * 分页查询下载任务。默认只返回活动任务和最近一段历史，避免无限加载全部记录。
+     * status 为空时优先活动任务，再按创建时间倒序补齐最近历史。
+     */
+    public Page<MvDownloadTask> listTasks(String status, OffsetDateTime since, int page, int size) {
+        int safeSize = Math.max(1, Math.min(size, 100));
+        int safePage = Math.max(0, page);
+        PageRequest pageable = PageRequest.of(safePage, safeSize);
+        String normalized = status == null ? "" : status.trim().toUpperCase(Locale.ROOT);
+        OffsetDateTime from = since != null ? since : OffsetDateTime.now().minusDays(7);
+        if ("ACTIVE".equals(normalized)) {
+            return taskRepo.findByStatusInOrderByCreatedAtDesc(ACTIVE_STATUSES, pageable);
+        }
+        if (!normalized.isBlank() && !"ALL".equals(normalized)) {
+            return taskRepo.findByStatusAndCreatedAtGreaterThanEqualOrderByCreatedAtDesc(normalized, from, pageable);
+        }
+        return taskRepo.findRecentOrActive(ACTIVE_STATUSES, from, pageable);
+    }
+
+    public Map<String, Object> listTasksPage(String status, OffsetDateTime since, int page, int size) {
+        Page<MvDownloadTask> result = listTasks(status, since, page, size);
+        return Map.of(
+                "content", result.getContent().stream().map(MvDownloadTaskDto::from).toList(),
+                "total", result.getTotalElements(),
+                "page", result.getNumber(),
+                "size", result.getSize(),
+                "totalPages", result.getTotalPages(),
+                "activeCount", taskRepo.countByStatusIn(ACTIVE_STATUSES)
+        );
+    }
+
+    private static final List<String> ACTIVE_STATUSES = List.of("PENDING", "DOWNLOADING", "MERGING", "IMPORTING");
 
     /**
      * 取消下载任务
@@ -252,12 +295,32 @@ public class MvDownloadService {
     }
 
     /**
-     * 删除任务记录
+     * 删除任务记录，同时清理其断点与中间文件。
      */
     public void deleteTask(Long taskId) {
         cancelTask(taskId);
+        taskRepo.findById(taskId).ifPresent(this::cleanupTempFiles);
         taskRepo.deleteById(taskId);
     }
+
+    /** 清理该任务的 .part 断点与合流中间文件（目标成品保留）。 */
+    private void cleanupTempFiles(MvDownloadTask task) {
+        String target = task.getTargetFilePath();
+        if (target == null || target.isBlank()) return;
+        Path targetFile = Path.of(target);
+        String base = targetFile.getFileName().toString();
+        if (base.endsWith(".mp4")) base = base.substring(0, base.length() - 4);
+        Path dir = targetFile.getParent();
+        if (dir == null) return;
+        for (String suffix : TEMP_FILE_SUFFIXES) {
+            try { Files.deleteIfExists(dir.resolve(base + suffix)); } catch (Exception ignored) {}
+        }
+    }
+
+    /** 下载过程中可能产生的中间文件后缀（成品文件不在其中）。 */
+    private static final List<String> TEMP_FILE_SUFFIXES = List.of(
+            ".part", ".tmp.mp4", ".tmp.mp4.part",
+            ".video.tmp", ".video.tmp.part", ".audio.tmp", ".audio.tmp.part");
 
     /**
      * 任务实际执行流程
@@ -268,6 +331,10 @@ public class MvDownloadService {
 
         activeTaskCancelFlags.remove(taskId);
         task.setStatus("DOWNLOADING");
+        task.setErrorMessage(null);
+        // 每次进入执行都重新统计本次会话的字节数；已有 .part 断点会在下载阶段被识别并续传
+        task.setDownloadedBytes(0L);
+        task.setTotalBytes(0L);
         taskRepo.save(task);
         broadcastProgress(task);
 
@@ -296,7 +363,7 @@ public class MvDownloadService {
             if (!streamInfo.isDash()) {
                 // 单视频流直接拉取 (网易云模式)
                 tmpFile = targetDir.resolve(baseName + ".tmp.mp4");
-                downloadStreamToFile(streamInfo.videoUrl(), streamInfo.httpHeaders(), tmpFile, task, 0, 90);
+                downloadWithRetry(streamInfo.videoUrl(), streamInfo.httpHeaders(), tmpFile, task, 0, 90);
                 checkCancelled(taskId);
                 Files.move(tmpFile, targetFile, StandardCopyOption.REPLACE_EXISTING);
             } else {
@@ -305,11 +372,11 @@ public class MvDownloadService {
                 audioTmp = targetDir.resolve(baseName + ".audio.tmp");
 
                 // 0% ~ 60%: 视频流下载
-                downloadStreamToFile(streamInfo.videoUrl(), streamInfo.httpHeaders(), videoTmp, task, 0, 60);
+                downloadWithRetry(streamInfo.videoUrl(), streamInfo.httpHeaders(), videoTmp, task, 0, 60);
                 checkCancelled(taskId);
 
                 // 60% ~ 85%: 音频流下载
-                downloadStreamToFile(streamInfo.audioUrl(), streamInfo.httpHeaders(), audioTmp, task, 60, 85);
+                downloadWithRetry(streamInfo.audioUrl(), streamInfo.httpHeaders(), audioTmp, task, 60, 85);
                 checkCancelled(taskId);
 
                 // 85% ~ 90%: FFmpeg 无损合流封装
@@ -329,48 +396,31 @@ public class MvDownloadService {
             taskRepo.save(task);
             broadcastProgress(task);
 
-            // 触发原始音乐管理扫描管线，进行文件分析、格式判定与自动直拷入库
+            // 只把当前下载文件交给单文件入库，禁止默认全量扫描 source-music
+            String importStatus = "FAILED";
+            Long songId = null;
             try {
                 if (mediaImportService != null) {
-                    mediaImportService.scanSourceLibrary();
-                } else {
+                    MediaImportService.SourceScanResult importResult = mediaImportService.scanSourceLibrary(targetFile);
+                    if (importResult.copied() > 0) importStatus = "COPIED";
+                    else if (importResult.pendingTranscode() > 0) importStatus = "PENDING_TRANSCODE";
+                    else if (importResult.skippedSourceDuplicate() > 0 || importResult.skippedOutputDuplicate() > 0) importStatus = "SKIPPED";
+                    else if (importResult.unrecognized() > 0) importStatus = "UNRECOGNIZED";
+                    else if (importResult.failed() > 0) importStatus = "FAILED";
+                    else importStatus = "UNCHANGED";
+                } else if (scanService != null) {
                     scanService.ingest(targetFile);
+                    importStatus = "IMPORTED";
                 }
             } catch (Exception se) {
-                log.warn("触发曲库扫描异常: {}", se.getMessage());
+                importStatus = "FAILED";
+                log.warn("单文件增量入库失败: {}", se.getMessage());
             }
 
-            // 查询入库生成的歌曲 ID：
-            // 1. 优先从 media_import_records 表通过 sourcePath 查询（MediaImportService 扫描直拷入库后写入）
-            Long songId = null;
-           if (importRecordRepo != null) {
-                Optional<MediaImportRecord> record = importRecordRepo.findBySourcePath(targetFile.toAbsolutePath().normalize().toString());
-                if (record.isEmpty()) {
-                    record = importRecordRepo.findBySourcePath(targetFile.toAbsolutePath().toString());
-                }
-                if (record.isEmpty()) {
-                    record = importRecordRepo.findBySourcePath(targetFile.toString());
-                }
-                if (record.isPresent() && record.get().getSongId() != null) {
-                    songId = record.get().getSongId();
-                }
-            }
-            // 2. 备用从 song_files 表直接根据路径匹配（直接 ingest 原地入库时）
-            if (songId == null && songFileRepo != null) {
-                Optional<SongFile> ingestedFile = songFileRepo.findByFilePath(targetFile.toAbsolutePath().toString());
-                if (ingestedFile.isPresent()) {
-                    songId = ingestedFile.get().getSongId();
-                }
-            }
-            // 3. 兜底从曲库最新文件按目标文件名结尾匹配
-            if (songId == null && songFileRepo != null) {
-                String filename = targetFile.getFileName().toString();
-                List<SongFile> matches = songFileRepo.findAll().stream()
-                        .filter(sf -> sf.getFilePath() != null && sf.getFilePath().endsWith(filename))
-                        .toList();
-                if (!matches.isEmpty()) {
-                    songId = matches.getFirst().getSongId();
-                }
+            songId = resolveImportedSongId(targetFile);
+            log.info("MV 单文件增量入库完成 taskId={} importStatus={} songId={}", taskId, importStatus, songId);
+            if ("FAILED".equals(importStatus) && songId == null) {
+                throw new IOException("下载完成但单文件入库失败");
             }
 
             if (songId != null) {
@@ -420,17 +470,26 @@ public class MvDownloadService {
             wsBroadcaster.broadcast(WsEvent.of("mv_download_completed", Map.of(
                     "taskId", task.getId(),
                     "songId", task.getSongId() != null ? task.getSongId() : 0,
-                    "title", task.getTitle()
+                    "title", task.getTitle(),
+                    "status", task.getStatus(),
+                    "importStatus", importStatus
             )));
 
         } catch (Exception e) {
-            log.error("MV 下载任务执行失败 taskId={}: {}", taskId, e.getMessage(), e);
-            task.setStatus("FAILED");
+            boolean cancelled = e instanceof TaskCancelledException;
+            log.error("MV 下载任务{} taskId={}: {}", cancelled ? "被取消" : "执行失败", taskId, e.getMessage(), e);
+            task.setStatus(cancelled ? "CANCELLED" : "FAILED");
             task.setErrorMessage(e.getMessage() != null ? e.getMessage() : "下载或合流失败");
             task.setSpeedBps(0);
             taskRepo.save(task);
             broadcastProgress(task);
-            // 清理遗留临时文件
+            wsBroadcaster.broadcast(WsEvent.of("mv_download_completed", Map.of(
+                    "taskId", task.getId(),
+                    "songId", 0,
+                    "title", task.getTitle(),
+                    "status", task.getStatus()
+            )));
+            // 保留 .part 断点文件供重试续传；仅清理本身不完整、无法续传的中间产物
             if (tmpFile != null) try { Files.deleteIfExists(tmpFile); } catch (Exception ignored) {}
             if (videoTmp != null) try { Files.deleteIfExists(videoTmp); } catch (Exception ignored) {}
             if (audioTmp != null) try { Files.deleteIfExists(audioTmp); } catch (Exception ignored) {}
@@ -440,30 +499,85 @@ public class MvDownloadService {
     }
 
     /**
-     * 流式下载到目标文件并实时统计速度与百分比
+     * 流式下载到目标文件，支持真实断点续传（任务 3.2）。
+     *
+     * <p>未完成的下载保存在同级 {@code .part} 文件中：重试/重跑时按已有长度发送
+     * {@code Range: bytes=<length>-}，服务端返回 206 才继续追加；若返回 200（忽略 Range）
+     * 或 ETag/Last-Modified 变化，则丢弃断点从头下载。下载成功后原子重命名，避免半成品被扫描或播放。
+     *
+     * @param destFile 最终目标文件（成功后才出现）
      */
-    private void downloadStreamToFile(String streamUrl, Map<String, String> headers, Path destFile,
-                                      MvDownloadTask task, int startPercent, int endPercent) throws Exception {
+    void downloadStreamToFile(String streamUrl, Map<String, String> headers, Path destFile,
+                              MvDownloadTask task, int startPercent, int endPercent) throws Exception {
+        Path partFile = partFileOf(destFile);
+        long resumeOffset = Files.exists(partFile) ? Files.size(partFile) : 0L;
+        if (resumeOffset > 0) {
+            // 断点仅在远端文件未变化时可用
+            long existingBytes = task.getDownloadedBytes();
+            log.info("检测到未完成下载，尝试断点续传: file={} offset={} bytes", partFile.getFileName(), resumeOffset);
+            task.setDownloadedBytes(Math.max(0, existingBytes - resumeOffset));
+        }
+
         HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(streamUrl))
-                .timeout(Duration.ofMinutes(10))
+                .timeout(Duration.ofMinutes(30))
                 .GET();
         if (headers != null) headers.forEach(builder::header);
-
-        HttpResponse<InputStream> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IOException("下载请求返回 HTTP " + response.statusCode());
+        if (resumeOffset > 0) {
+            builder.header("Range", "bytes=" + resumeOffset + "-");
+            if (task.getEtag() != null && !task.getEtag().isBlank()) {
+                builder.header("If-Range", task.getEtag());
+            } else if (task.getLastModified() != null && !task.getLastModified().isBlank()) {
+                builder.header("If-Range", task.getLastModified());
+            }
         }
 
-        long contentLength = response.headers().firstValueAsLong("Content-Length").orElse(0L);
-        if (contentLength > 0) {
-            task.setTotalBytes(task.getTotalBytes() + contentLength);
+        HttpResponse<InputStream> response =
+                httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
+        int status = response.statusCode();
+        String etag = response.headers().firstValue("ETag").orElse(null);
+        String lastModified = response.headers().firstValue("Last-Modified").orElse(null);
+
+        boolean resumed = false;
+        long totalLength;
+        if (resumeOffset > 0 && status == 206) {
+            // 服务端确认断点有效：正文是剩余部分
+            long remaining = response.headers().firstValueAsLong("Content-Length").orElse(0L);
+            totalLength = remaining > 0 ? resumeOffset + remaining : 0L;
+            resumed = true;
+            task.setResumeState("RESUMED");
+        } else if (resumeOffset > 0 && status == 200) {
+            // 服务端忽略 Range（或 If-Range 失效）：必须丢弃断点全量重下，否则文件会损坏
+            log.info("服务端未支持断点续传，改为重新完整下载: file={}", destFile.getFileName());
+            resumeOffset = 0L;
+            Files.deleteIfExists(partFile);
+            totalLength = response.headers().firstValueAsLong("Content-Length").orElse(0L);
+            task.setResumeState("RESTARTED");
+            task.setDownloadedBytes(0);
+        } else if (status >= 200 && status < 300) {
+            totalLength = response.headers().firstValueAsLong("Content-Length").orElse(0L);
+            task.setResumeState("FRESH");
+        } else {
+            throw new IOException("下载请求返回 HTTP " + status);
         }
 
-        long downloaded = 0;
+        // 记录远端标识，供下次断点校验
+        if (etag != null) task.setEtag(etag);
+        if (lastModified != null) task.setLastModified(lastModified);
+        if (totalLength > 0) {
+            task.setTotalBytes(task.getTotalBytes() + totalLength);
+        }
+
+        long downloaded = resumeOffset;
         long lastTime = System.currentTimeMillis();
         long bytesSinceLastTime = 0;
+        var openOptions = new java.nio.file.OpenOption[]{
+                java.nio.file.StandardOpenOption.CREATE,
+                java.nio.file.StandardOpenOption.WRITE,
+                resumed ? java.nio.file.StandardOpenOption.APPEND
+                        : java.nio.file.StandardOpenOption.TRUNCATE_EXISTING
+        };
 
-        try (InputStream in = response.body(); OutputStream out = Files.newOutputStream(destFile)) {
+        try (InputStream in = response.body(); OutputStream out = Files.newOutputStream(partFile, openOptions)) {
             byte[] buffer = new byte[BUFFER_SIZE];
             int bytesRead;
             while ((bytesRead = in.read(buffer)) != -1) {
@@ -478,8 +592,8 @@ public class MvDownloadService {
                     long speed = (bytesSinceLastTime * 1000) / elapsed;
                     task.setDownloadedBytes(task.getDownloadedBytes() + bytesSinceLastTime);
                     task.setSpeedBps(speed);
-                    if (contentLength > 0) {
-                        int subProgress = (int) ((downloaded * (endPercent - startPercent)) / contentLength);
+                    if (totalLength > 0) {
+                        int subProgress = (int) ((downloaded * (endPercent - startPercent)) / totalLength);
                         task.setProgress(Math.min(endPercent, startPercent + subProgress));
                     }
                     taskRepo.save(task);
@@ -489,11 +603,60 @@ public class MvDownloadService {
                     bytesSinceLastTime = 0;
                 }
             }
+            out.flush();
+        }
+
+        // 完整性校验：只有拿到预期长度才认可
+        if (totalLength > 0 && downloaded < totalLength) {
+            throw new IOException("下载不完整（已接收 " + downloaded + "/" + totalLength + " 字节），保留断点待重试");
+        }
+
+        // 原子重命名，避免半成品被扫描或播放
+        try {
+            Files.move(partFile, destFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (Exception atomicFailure) {
+            Files.move(partFile, destFile, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    /** 未完成下载的临时文件路径。 */
+    static Path partFileOf(Path destFile) {
+        return destFile.resolveSibling(destFile.getFileName().toString() + ".part");
+    }
+
+    /**
+     * 下载失败自动重试。网络抖动时保留 {@code .part} 断点，下一次尝试自动走 Range 续传；
+     * 用户主动取消不重试。任务状态会在 DOWNLOADING / RETRYING 之间切换，并累计重试次数供用户查看。
+     */
+    private void downloadWithRetry(String streamUrl, Map<String, String> headers, Path destFile,
+                                   MvDownloadTask task, int startPercent, int endPercent) throws Exception {
+        int attempt = 0;
+        while (true) {
+            attempt++;
+            try {
+                downloadStreamToFile(streamUrl, headers, destFile, task, startPercent, endPercent);
+                return;
+            } catch (TaskCancelledException cancelled) {
+                throw cancelled;
+            } catch (Exception failure) {
+                if (attempt >= DOWNLOAD_MAX_ATTEMPTS) throw failure;
+                task.setRetryCount(task.getRetryCount() + 1);
+                task.setStatus("RETRYING");
+                task.setErrorMessage("第 " + attempt + " 次下载中断，正在重试：" + safeMessage(failure));
+                taskRepo.save(task);
+                broadcastProgress(task);
+                log.warn("下载中断，保留断点准备重试 attempt={}/{} file={} msg={}",
+                        attempt, DOWNLOAD_MAX_ATTEMPTS, destFile.getFileName(), failure.getMessage());
+                Thread.sleep(RETRY_BACKOFF_MS * attempt);
+                task.setStatus("DOWNLOADING");
+                task.setErrorMessage(null);
+                taskRepo.save(task);
+            }
         }
     }
 
     /**
-     * 使用系统 FFmpeg 将独立的视频流和音频流无损合流（pure stream copy，耗时极短）
+     * 使用系统 FFmpeg 将独立的视频流和音频流无损合流（pure stream copy，耗时极短）。
      */
     private void mergeDashStreams(Path videoFile, Path audioFile, Path outputFile) throws Exception {
         List<String> cmd = List.of(
@@ -507,25 +670,71 @@ public class MvDownloadService {
                 outputFile.toAbsolutePath().toString()
         );
 
+        ExternalProcessRunner.Result result;
         try {
-            Process process = new ProcessBuilder(cmd).redirectErrorStream(true).start();
-            String output = new String(process.getInputStream().readAllBytes());
-            int code = process.waitFor();
-            if (code != 0 || !Files.isReadable(outputFile) || Files.size(outputFile) == 0) {
-                throw new IOException("FFmpeg 音视频合流失败 (code=" + code + "): " + output);
-            }
+            result = ExternalProcessRunner.run("DASH 音视频合流", cmd, outputFile, MERGE_TIMEOUT);
         } catch (IOException e) {
             if (e.getMessage() != null && (e.getMessage().contains("Cannot run program") || e.getMessage().contains("系统找不到指定的文件"))) {
                 throw new IOException("系统未找到 FFmpeg 工具。Docker 环境下已内置；本地运行请安装 FFmpeg 并配置到系统 PATH 环境变量。");
             }
             throw e;
         }
+        if (result.timedOut()) {
+            throw new IOException("FFmpeg 音视频合流超时（" + MERGE_TIMEOUT.toMinutes() + "分钟）");
+        }
+        if (result.cancelled()) {
+            throw new TaskCancelledException();
+        }
+        if (result.exitCode() != 0 || !Files.isReadable(outputFile) || Files.size(outputFile) == 0) {
+            throw new IOException("FFmpeg 音视频合流失败 (code=" + result.exitCode() + "): " + result.diagnostic());
+        }
     }
 
     private void checkCancelled(Long taskId) {
         if (Boolean.TRUE.equals(activeTaskCancelFlags.get(taskId))) {
-            throw new RuntimeException("任务已被用户取消");
+            throw new TaskCancelledException();
         }
+    }
+
+    /** 用户主动取消：不参与自动重试，且保留 .part 供后续手动重试续传。 */
+    private static final class TaskCancelledException extends RuntimeException {
+        TaskCancelledException() {
+            super("任务已被用户取消");
+        }
+    }
+
+    private static String safeMessage(Exception failure) {
+        String message = failure.getMessage();
+        if (message == null || message.isBlank()) return failure.getClass().getSimpleName();
+        return message.length() > 300 ? message.substring(0, 300) : message;
+    }
+
+    /**
+     * 用绝对路径精确查找入库后的 songId，不再全表按文件名后缀匹配。
+     * 直拷会把文件从 downloads 移到曲库目录，因此同时查源路径和目标路径。
+     */
+    private Long resolveImportedSongId(Path targetFile) {
+        if (targetFile == null) return null;
+        List<String> pathCandidates = List.of(
+                targetFile.toAbsolutePath().normalize().toString(),
+                targetFile.toAbsolutePath().toString(),
+                targetFile.toString()
+        );
+        if (importRecordRepo != null) {
+            for (String path : pathCandidates) {
+                Optional<MediaImportRecord> record = importRecordRepo.findBySourcePath(path);
+                if (record.isPresent() && record.get().getSongId() != null) return record.get().getSongId();
+            }
+        }
+        if (songFileRepo != null) {
+            for (String path : pathCandidates) {
+                Optional<SongFile> byFile = songFileRepo.findByFilePath(path);
+                if (byFile.isPresent()) return byFile.get().getSongId();
+                List<SongFile> bySource = songFileRepo.findBySourcePath(path);
+                if (bySource != null && !bySource.isEmpty()) return bySource.getFirst().getSongId();
+            }
+        }
+        return null;
     }
 
     private void broadcastProgress(MvDownloadTask task) {

@@ -19,17 +19,26 @@ public record QueueSnapshot(
         Long queueId,
         Integer position,
         Boolean duplicated,
-        Boolean playbackStarted
+        Boolean playbackStarted,
+        long totalCount    // 等待队列总长度（快照 list 可能被截断到上限，前端据它提示剩余数量）
 ) {
     public QueueSnapshot(NowPlaying playing, List<QueueEntry> list, String state,
                          int volume, boolean muted, String vocalMode,
                          boolean tvOnline, long connectedPhones) {
-        this(playing, list, state, volume, muted, vocalMode, tvOnline, connectedPhones, null, null, null, null);
+        this(playing, list, state, volume, muted, vocalMode, tvOnline, connectedPhones,
+                null, null, null, null, list == null ? 0 : list.size());
+    }
+
+    public QueueSnapshot(NowPlaying playing, List<QueueEntry> list, String state,
+                         int volume, boolean muted, String vocalMode,
+                         boolean tvOnline, long connectedPhones, long totalCount) {
+        this(playing, list, state, volume, muted, vocalMode, tvOnline, connectedPhones,
+                null, null, null, null, totalCount);
     }
 
     public QueueSnapshot withOrderResult(Long queueId, Integer position, Boolean duplicated, Boolean playbackStarted) {
         return new QueueSnapshot(playing, list, state, volume, muted, vocalMode, tvOnline, connectedPhones,
-                queueId, position, duplicated, playbackStarted);
+                queueId, position, duplicated, playbackStarted, totalCount);
     }
 
     /** 正在播放 / Now playing */

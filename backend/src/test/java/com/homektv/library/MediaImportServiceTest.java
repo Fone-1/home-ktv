@@ -182,9 +182,9 @@ class MediaImportServiceTest {
         });
 
         try (var executor = Executors.newFixedThreadPool(2)) {
-            var first = executor.submit(service::scanSourceLibrary);
+            var first = executor.submit(() -> service.scanSourceLibrary());
             assertThat(firstProbeStarted.await(5, TimeUnit.SECONDS)).isTrue();
-            var second = executor.submit(service::scanSourceLibrary);
+            var second = executor.submit(() -> service.scanSourceLibrary());
             releaseFirstProbe.countDown();
 
             assertThat(first.get(5, TimeUnit.SECONDS).pendingTranscode()).isEqualTo(1);

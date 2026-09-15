@@ -1,6 +1,7 @@
 package com.homektv.web;
 
 import com.homektv.domain.PlayHistory;
+import com.homektv.domain.Song;
 import com.homektv.repo.PlayHistoryRepository;
 import com.homektv.repo.AppUserRepository;
 import com.homektv.repo.SongRepository;
@@ -22,9 +23,12 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * 已播历史（P3.2，详设§7 H5-05）：今晚已唱列表，供「再唱一遍」（前端用 song id 再点歌）。
@@ -72,11 +76,13 @@ public class HistoryController {
      */
     @GetMapping("/history")
     public List<SongDto> history() {
-        List<SongDto> out = new ArrayList<>();
-        for (PlayHistory h : historyRepo.findTop50ByOrderByPlayedAtDesc()) {
-            songRepo.findById(h.getSongId()).ifPresent(s -> out.add(SongDto.from(s)));
-        }
-        return out;
+        List<PlayHistory> records = historyRepo.findTop50ByOrderByPlayedAtDesc();
+        Map<Long, Song> songs = loadSongs(records.stream().map(PlayHistory::getSongId).toList());
+        return records.stream()
+                .map(h -> songs.get(h.getSongId()))
+                .filter(s -> s != null)
+                .map(SongDto::from)
+                .toList();
     }
 
     /**
@@ -93,17 +99,42 @@ public class HistoryController {
                                          @RequestParam(defaultValue = "false") boolean mine) {
         Long currentUserId = clientToken == null || clientToken.isBlank()
                 ? null : userRepo.findByClientToken(clientToken).map(AppUser::getId).orElse(null);
-        List<RecentHistoryDto> result = new ArrayList<>();
-        for (PlayHistory history : historyRepo.findTop50ByOrderByPlayedAtDesc()) {
-            if (mine && (currentUserId == null || !currentUserId.equals(history.getPlayedBy()))) continue;
-            songRepo.findById(history.getSongId()).ifPresent(song -> {
-                String nickname = history.getPlayedBy() == null ? "家人" : userRepo.findById(history.getPlayedBy())
-                        .map(AppUser::getNickname).orElse("家人");
-                result.add(new RecentHistoryDto(history.getId(), SongDto.from(song), history.getPlayedBy(), nickname,
-                        currentUserId != null && currentUserId.equals(history.getPlayedBy()), history.getPlayedAt()));
-            });
+        List<PlayHistory> records = historyRepo.findTop50ByOrderByPlayedAtDesc();
+        if (mine) {
+            records = records.stream()
+                    .filter(h -> currentUserId != null && currentUserId.equals(h.getPlayedBy()))
+                    .toList();
         }
-        return result;
+        Map<Long, Song> songs = loadSongs(records.stream().map(PlayHistory::getSongId).toList());
+        Map<Long, String> nicknames = loadNicknames(records.stream().map(PlayHistory::getPlayedBy).toList());
+        return records.stream()
+                .filter(h -> songs.containsKey(h.getSongId()))
+                .map(h -> {
+                    String nickname = h.getPlayedBy() == null ? "家人"
+                            : nicknames.getOrDefault(h.getPlayedBy(), "家人");
+                    return new RecentHistoryDto(h.getId(), SongDto.from(songs.get(h.getSongId())), h.getPlayedBy(),
+                            nickname, currentUserId != null && currentUserId.equals(h.getPlayedBy()), h.getPlayedAt());
+                })
+                .toList();
+    }
+
+    /** 历史歌曲批量加载：先收集去重 ID，再一次性 findAllById，避免逐条 findById 的 N+1。 */
+    private Map<Long, Song> loadSongs(List<Long> songIds) {
+        Set<Long> ids = songIds.stream().filter(id -> id != null)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (ids.isEmpty()) return Map.of();
+        return songRepo.findAllById(ids).stream()
+                .collect(Collectors.toMap(Song::getId, Function.identity(), (a, b) -> a));
+    }
+
+    /** 历史用户昵称批量加载，行为同 {@link #loadSongs}。 */
+    private Map<Long, String> loadNicknames(List<Long> userIds) {
+        Set<Long> ids = userIds.stream().filter(id -> id != null)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (ids.isEmpty()) return Map.of();
+        return userRepo.findAllById(ids).stream()
+                .filter(u -> u.getNickname() != null)
+                .collect(Collectors.toMap(AppUser::getId, AppUser::getNickname, (a, b) -> a));
     }
 
     /**
