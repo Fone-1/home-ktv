@@ -191,8 +191,10 @@ export const api = {
     request('/mv/parts?provider=' + encodeURIComponent(provider) + '&externalId=' + encodeURIComponent(externalId)),
   batchDownloadMv: (items) =>
     request('/mv/batch-download', { method: 'POST', body: JSON.stringify(items) }),
-  listMvTasks: () =>
-    request('/mv/tasks'),
+  listMvTasks: (params = {}) =>
+    request('/mv/tasks?' + new URLSearchParams(
+      Object.entries(params).filter(([, value]) => value !== '' && value != null)
+    ).toString()),
   cancelMvTask: (id) =>
     request(`/mv/tasks/${id}/cancel`, { method: 'POST' }),
   retryMvTask: (id) =>

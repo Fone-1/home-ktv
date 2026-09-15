@@ -14,7 +14,7 @@
       </div>
       <div class="header-meta">
         <div class="stat-pill">
-          <span class="stat-num">{{ tasks.length }}</span>
+          <span class="stat-num">{{ taskTotal }}</span>
           <span class="stat-label">总任务数</span>
         </div>
         <div class="stat-pill active">
@@ -223,28 +223,28 @@
             <button
               class="chip-btn"
               :class="{ active: currentTaskFilter === 'ALL' }"
-              @click="currentTaskFilter = 'ALL'"
+              @click="changeTaskFilter('ALL')"
             >
-              全部 ({{ tasks.length }})
+              全部 ({{ taskTotal }})
             </button>
             <button
               class="chip-btn"
               :class="{ active: currentTaskFilter === 'ACTIVE' }"
-              @click="currentTaskFilter = 'ACTIVE'"
+              @click="changeTaskFilter('ACTIVE')"
             >
               进行中 ({{ activeTasksCount }})
             </button>
             <button
               class="chip-btn"
               :class="{ active: currentTaskFilter === 'COMPLETED' }"
-              @click="currentTaskFilter = 'COMPLETED'"
+              @click="changeTaskFilter('COMPLETED')"
             >
               已入库 ({{ completedTasksCount }})
             </button>
             <button
               class="chip-btn"
               :class="{ active: currentTaskFilter === 'FAILED' }"
-              @click="currentTaskFilter = 'FAILED'"
+              @click="changeTaskFilter('FAILED')"
             >
               失败 ({{ failedTasksCount }})
             </button>
@@ -361,6 +361,11 @@
             </tr>
           </tbody>
         </table>
+      </div>
+      <div v-if="taskTotalPages > 1" class="task-pager">
+        <button class="refresh-tasks-btn" :disabled="taskPage <= 0" @click="taskPage--; fetchTasks()">上一页</button>
+        <span>{{ taskPage + 1 }} / {{ taskTotalPages }}</span>
+        <button class="refresh-tasks-btn" :disabled="taskPage + 1 >= taskTotalPages" @click="taskPage++; fetchTasks()">下一页</button>
       </div>
     </section>
 
@@ -592,6 +597,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import AdminLayout from './AdminLayout.vue'
 import { api } from '../../api/client'
+import { KtvSocket } from '../../api/ws'
 import {
   Search, X, FileVideo2, RefreshCw, Check, RotateCcw, Trash2, AlertTriangle, QrCode, LogOut, ListPlus
 } from 'lucide-vue-next'
@@ -619,6 +625,13 @@ const isCoverFailed = (item) => {
 const tasks = ref([])
 const currentTaskFilter = ref('ALL')
 const tasksRefreshing = ref(false)
+const taskPage = ref(0)
+const taskPageSize = 50
+const taskTotal = ref(0)
+const taskTotalPages = ref(1)
+const activeTasksCount = ref(0)
+const completedTasksCount = ref(0)
+const failedTasksCount = ref(0)
 const submittedExternalIds = ref(new Set())
 
 const globalSettings = ref({
@@ -781,31 +794,16 @@ const errorDetailOpen = ref(false)
 const selectedErrorTask = ref(null)
 
 let timer = null
+let taskSocket = null
+let pageVisible = true
 
-const activeTasksCount = computed(() => {
-  return tasks.value.filter(t => t.status === 'DOWNLOADING' || t.status === 'PENDING' || t.status === 'MERGING' || t.status === 'IMPORTING').length
-})
+const filteredTasks = computed(() => tasks.value)
 
-const completedTasksCount = computed(() => {
-  return tasks.value.filter(t => t.status === 'COMPLETED').length
-})
-
-const failedTasksCount = computed(() => {
-  return tasks.value.filter(t => t.status === 'FAILED').length
-})
-
-const filteredTasks = computed(() => {
-  if (currentTaskFilter.value === 'ACTIVE') {
-    return tasks.value.filter(t => t.status === 'DOWNLOADING' || t.status === 'PENDING' || t.status === 'MERGING' || t.status === 'IMPORTING')
-  }
-  if (currentTaskFilter.value === 'COMPLETED') {
-    return tasks.value.filter(t => t.status === 'COMPLETED')
-  }
-  if (currentTaskFilter.value === 'FAILED') {
-    return tasks.value.filter(t => t.status === 'FAILED')
-  }
-  return tasks.value
-})
+const changeTaskFilter = (next) => {
+  currentTaskFilter.value = next
+  taskPage.value = 0
+  fetchTasks()
+}
 
 const fetchBiliStatus = async () => {
   try {
@@ -946,13 +944,62 @@ const isDownloading = (item) => {
 const fetchTasks = async () => {
   tasksRefreshing.value = true
   try {
-    const list = await api.listMvTasks()
-    tasks.value = list || []
+    const res = await api.listMvTasks({
+      status: currentTaskFilter.value,
+      page: taskPage.value,
+      size: taskPageSize
+    })
+    if (Array.isArray(res)) {
+      tasks.value = res
+      taskTotal.value = res.length
+      taskTotalPages.value = 1
+      activeTasksCount.value = res.filter(t => ['PENDING', 'DOWNLOADING', 'MERGING', 'IMPORTING'].includes(t.status)).length
+      completedTasksCount.value = res.filter(t => t.status === 'COMPLETED').length
+      failedTasksCount.value = res.filter(t => t.status === 'FAILED').length
+    } else {
+      tasks.value = res.content || []
+      taskTotal.value = Number(res.total || 0)
+      taskTotalPages.value = Math.max(1, Number(res.totalPages || 1))
+      activeTasksCount.value = Number(res.activeCount || 0)
+      if (currentTaskFilter.value === 'COMPLETED') completedTasksCount.value = Number(res.total || 0)
+      if (currentTaskFilter.value === 'FAILED') failedTasksCount.value = Number(res.total || 0)
+    }
   } catch (e) {
     console.error('获取任务列表失败', e)
   } finally {
     setTimeout(() => { tasksRefreshing.value = false }, 400)
   }
+}
+
+const applyTaskProgress = (payload) => {
+  if (!payload || payload.taskId == null) return
+  const index = tasks.value.findIndex(t => t.id === payload.taskId)
+  if (index < 0) {
+    if (['PENDING', 'DOWNLOADING', 'MERGING', 'IMPORTING'].includes(payload.status)) fetchTasks()
+    return
+  }
+  const current = tasks.value[index]
+  tasks.value[index] = {
+    ...current,
+    status: payload.status ?? current.status,
+    progress: payload.progress ?? current.progress,
+    speedBps: payload.speedBps ?? current.speedBps,
+    downloadedBytes: payload.downloadedBytes ?? current.downloadedBytes,
+    totalBytes: payload.totalBytes ?? current.totalBytes
+  }
+}
+
+const pollingInterval = () => {
+  if (!pageVisible) return 15000
+  return activeTasksCount.value > 0 ? 5000 : 12000
+}
+
+const restartPolling = () => {
+  if (timer) clearInterval(timer)
+  timer = setInterval(() => {
+    if (!pageVisible && activeTasksCount.value === 0) return
+    fetchTasks()
+  }, pollingInterval())
 }
 
 const cancelTask = async (id) => {
@@ -1047,15 +1094,31 @@ const formatTime = (iso) => {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
+const onVisibilityChange = () => {
+  pageVisible = document.visibilityState === 'visible'
+  restartPolling()
+  if (pageVisible) fetchTasks()
+}
+
 onMounted(() => {
   fetchTasks()
   fetchBiliStatus()
   fetchGlobalSettings()
-  timer = setInterval(fetchTasks, 3000)
+  restartPolling()
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  taskSocket = new KtvSocket({
+    onEvent: (type, payload) => {
+      if (type === 'mv_download_progress') applyTaskProgress(payload)
+      if (type === 'mv_download_completed') fetchTasks()
+    }
+  })
+  taskSocket.connect()
 })
 
 onUnmounted(() => {
   if (timer) clearInterval(timer)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  if (taskSocket) taskSocket.close()
   stopQrPolling()
 })
 </script>
@@ -2532,6 +2595,15 @@ onUnmounted(() => {
   color: #64748b;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+.task-pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 4px 0;
+  color: #64748b;
+  font-size: 12px;
 }
 .parts-modal-footer {
   display: flex;
