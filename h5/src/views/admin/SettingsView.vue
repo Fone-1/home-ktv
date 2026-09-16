@@ -42,14 +42,15 @@
         </section>
 
         <section v-show="section === 'ai'" class="section ai-section" id="section-ai">
-          <SectionHead title="AI 模型" description="支持任意 OpenAI-compatible 服务，未配置时继续使用本地解析"><Bot :size="19" /><template #aside><span class="source-pill" :class="{ok: ai.apiKeyConfigured && ai.enabled}"><i></i>{{ ai.enabled && ai.apiKeyConfigured ? '服务可用' : '未配置' }}</span></template></SectionHead>
+          <SectionHead title="AI 模型" description="支持任意 OpenAI-compatible 服务，未配置时继续使用本地解析"><Bot :size="19" /><template #aside><span class="source-pill" :class="{ok: ai.apiKeyConfigured && ai.enabled}"><i></i>{{ ai.apiKeyUnreadable ? '密钥不可读' : ai.enabled && ai.apiKeyConfigured ? '服务可用' : '未配置' }}</span></template></SectionHead>
+          <div v-if="ai.apiKeyUnreadable" class="ai-unreadable">已保存的 API Key 无法解密（配置主密钥已变化），AI 功能已暂停。请在下方重新输入 API Key 并保存。</div>
           <div class="ai-status"><div><span>配置来源</span><strong>{{ sourceLabel(ai.sources?.bulk_model) }}</strong></div><div><span>最近测试</span><strong>{{ ai.lastTestAt ? formatTime(ai.lastTestAt) : '尚未测试' }}</strong></div><div><span>JSON 模式</span><strong>{{ ai.jsonMode || 'AUTO' }}</strong></div></div>
           <div class="setting-group">
             <div class="group-head"><strong>服务连接</strong><span>兼容 Chat Completions 的服务地址与鉴权</span></div>
             <SettingRow id="ai_enabled" label="启用 AI" hint="AI 故障不会中断扫描、转码和入库"><Toggle v-model="aiForm.enabled" /></SettingRow>
             <SettingRow label="服务预设" hint="仅填充地址，所有字段仍可修改"><div class="presets"><button v-for="preset in presets" :key="preset.name" class="preset" @click="applyPreset(preset)">{{ preset.name }}</button></div></SettingRow>
             <SettingRow id="ai_base_url" label="API Base URL" hint="填写完整 API 前缀"><input v-model="aiForm.baseUrl" class="input wide" placeholder="https://api.example.com/v1" /></SettingRow>
-            <SettingRow id="ai_api_key" label="API Key" hint="留空保留已配置的 Key"><div class="key-control"><input v-model="aiForm.apiKey" class="input wide" type="password" placeholder="输入新的 API Key" /><div class="key-meta" v-if="ai.apiKeyConfigured"><span class="key-tail">已配置 · ****{{ ai.apiKeySuffix }}</span><button class="text-btn danger" @click="clearKey = !clearKey">{{ clearKey ? '取消清除' : '清除 Key' }}</button></div></div></SettingRow>
+            <SettingRow id="ai_api_key" label="API Key" hint="留空保留已配置的 Key"><div class="key-control"><input v-model="aiForm.apiKey" class="input wide" type="password" placeholder="输入新的 API Key" /><div class="key-meta" v-if="ai.apiKeyConfigured"><span class="key-tail">已配置 · ****{{ ai.apiKeySuffix }}</span><button class="text-btn danger" @click="clearKey = !clearKey">{{ clearKey ? '取消清除' : '清除 Key' }}</button></div><div class="key-meta" v-else-if="ai.apiKeyUnreadable"><span class="key-tail warn">旧 Key 无法解密，重新输入并保存即可恢复</span></div></div></SettingRow>
           </div>
           <div class="setting-group">
             <div class="group-head"><strong>任务模型</strong><span>分别承担批量分析和歧义复核</span></div>
@@ -215,7 +216,7 @@ const categories = [
 ]
 const search = ref(''); const section = ref(route.query.section && categories.some(x => x.key === route.query.section) ? route.query.section : 'basic')
 const form = reactive({ library_watch_enabled:false, qr_address:'', delete_source_after_transcode:false, tv_video_scale_mode:'zoom', standby_carousel:true, standby_source:'mixed', standby_song_ids:[], standby_logo_path:'', anti_burn:true, mini_qr:true, standby_welcome:'今晚开唱', standby_subtitle:'手机点歌，电视欢唱\n一家人的客厅 KTV', standby_interval_sec:8, direct_copy_containers:['mp4','m4v','mkv'], direct_copy_video_codecs:['h264','hevc'], direct_copy_audio_codecs:['aac','mp3'], transcode_audio_only:false, transcode_output_container:'mkv', transcode_video_codec:'h264', transcode_audio_codec:'aac', transcode_hardware_acceleration:false, dual_track_engine:'REMOTE_AI', dual_track_remote_url:'http://127.0.0.1:8900/api/separate', dual_track_remote_token:'', dual_track_concurrency:1, dual_track_backup_original:false, dual_track_audio_bitrate:'192k', mv_auto_enqueue:true, mv_auto_convert_dual_track:false })
-const ai = reactive({ enabled:false, apiKeyConfigured:false, apiKeySuffix:null, sources:{}, capabilities:{}, lastTestAt:null })
+const ai = reactive({ enabled:false, apiKeyConfigured:false, apiKeyUnreadable:false, apiKeySuffix:null, sources:{}, capabilities:{}, lastTestAt:null })
 const aiForm = reactive({ enabled:false, baseUrl:'', apiKey:'', bulkModel:'', reasoningModel:'', timeoutSeconds:60, identityThreshold:.97, classificationThreshold:.92, jsonMode:'AUTO', bulkConcurrency:2, reasoningConcurrency:1 })
 const musicForm = reactive({enabled:false,providers:[],resultLimit:20,timeoutSeconds:5,searchCacheHours:6,concurrencyLimit:1,requestIntervalMs:1500,autoApplyThreshold:.95})
 const musicStatus = ref([]); const musicProviderOptions=[{value:'NETEASE',label:'网易云音乐'},{value:'QQ',label:'QQ 音乐'},{value:'KUGOU',label:'酷狗音乐'}]
@@ -275,7 +276,7 @@ const hardwareStatusText = computed(() => hardware.available ? '硬件编码可�
 function snapshot(v){ return JSON.stringify(v) }
 function selectSection(value){ section.value=value; router.replace({query:{...route.query,section:value}}) }
 function jump(item){ selectSection(item.section); nextTick(()=>document.getElementById(item.key)?.scrollIntoView({behavior:'smooth',block:'center'})) }
-function sourceLabel(value){ return value==='DATABASE'?'管理后台':value==='ENVIRONMENT'?'环境变量':value==='NONE'?'未配置':'默认值' }
+function sourceLabel(value){ return value==='DATABASE'?'管理后台':value==='ENVIRONMENT'?'环境变量':value==='UNREADABLE'?'需重新保存':value==='NONE'?'未配置':'默认值' }
 function formatTime(value){ return value ? new Date(value).toLocaleString('zh-CN',{hour12:false}) : '' }
 function applyPreset(p){ if(p.baseUrl) aiForm.baseUrl=p.baseUrl }
 function applyFormSettings(target, source){ if(!source) return; for(const k of Object.keys(target)){ if(k in source){ target[k] = source[k] } } }
@@ -362,7 +363,8 @@ textarea.input{height:auto;min-height:58px;padding:8px 10px;resize:vertical}
 .switch.on{background:#2563eb}.switch.on :deep(span){transform:translateX(18px)}
 .key-control{display:grid;grid-template-columns:minmax(0,560px);justify-items:start;width:100%}
 .key-control .input{width:100%}
-.key-meta{display:flex;align-items:center;justify-content:flex-start;gap:10px;margin-top:7px}.key-tail{color:#15803d;font-size:10px}
+.key-meta{display:flex;align-items:center;justify-content:flex-start;gap:10px;margin-top:7px}.key-tail{color:#15803d;font-size:10px}.key-tail.warn{color:#b45309}
+.ai-unreadable{margin:14px 20px 0;padding:9px 12px;border:1px solid #fcd34d;border-radius:7px;background:#fffbeb;color:#92400e;font-size:11px;line-height:1.55}
 .model-control{display:flex;align-items:center;justify-content:flex-start;gap:8px;width:100%;max-width:560px}.model-control .input{width:auto;min-width:0;flex:1}
 .presets,.thresholds{display:flex;align-items:center;justify-content:flex-start;gap:8px;flex-wrap:wrap}
 .thresholds label{display:flex;align-items:center;gap:6px;color:#64748b;font-size:10px}.thresholds label span{white-space:nowrap}

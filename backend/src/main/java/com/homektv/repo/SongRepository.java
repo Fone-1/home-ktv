@@ -156,73 +156,77 @@ public interface SongRepository extends JpaRepository<Song, Long> {
             """, nativeQuery = true)
     List<Object[]> aggregateBrowseTags();
 
+    /**
+     * 管理后台歌手库分页聚合（阶段三修复）。
+     *
+     * <p>分组维度是「归一化歌手名」，因此不能再在关联子查询里引用外层未分组的 {@code s.artist}
+     * （PostgreSQL 会报 "subquery uses ungrouped column ... from outer query"）。
+     * 这里全部改用聚合函数：主类型用 {@code MODE() WITHIN GROUP} 取出现次数最多的歌手类型，
+     * 复核状态用 {@code BOOL_AND}，筛选条件放在外层对聚合结果过滤，查询中不含任何关联子查询。
+     *
+     * @param reviewed 复核状态过滤，取值 ""（全部）/ "true" / "false"
+     */
     @Query(value = """
-            SELECT COALESCE(NULLIF(TRIM(artist), ''), '未知歌手') AS name,
-                   COUNT(*) AS song_count,
-                   COALESCE((
-                       SELECT s2.artist_gender
-                       FROM songs s2
-                       WHERE s2.status = 'ok'
-                         AND COALESCE(NULLIF(TRIM(s2.artist), ''), '未知歌手') = COALESCE(NULLIF(TRIM(s.artist), ''), '未知歌手')
-                         AND s2.artist_gender IS NOT NULL
-                         AND TRIM(s2.artist_gender) <> ''
-                         AND s2.artist_gender <> '未知'
-                       GROUP BY s2.artist_gender
-                       ORDER BY COUNT(*) DESC, s2.artist_gender ASC
-                       LIMIT 1
-                   ), '未知') AS gender,
-                   BOOL_AND('artistGender' = ANY(COALESCE(metadata_locks, '{}')))
-                       AND BOOL_AND(artist_gender IS NOT NULL AND TRIM(artist_gender) <> '' AND artist_gender <> '未知') AS reviewed
-            FROM songs s
-            WHERE status = 'ok'
-              AND (:keyword = '' OR LOWER(COALESCE(NULLIF(TRIM(artist), ''), '未知歌手')) LIKE LOWER(CONCAT('%', :keyword, '%')))
-            GROUP BY COALESCE(NULLIF(TRIM(artist), ''), '未知歌手')
-            HAVING (:gender = '' OR COALESCE((
-                       SELECT s2.artist_gender
-                       FROM songs s2
-                       WHERE s2.status = 'ok'
-                         AND COALESCE(NULLIF(TRIM(s2.artist), ''), '未知歌手') = COALESCE(NULLIF(TRIM(s.artist), ''), '未知歌手')
-                         AND s2.artist_gender IS NOT NULL
-                         AND TRIM(s2.artist_gender) <> ''
-                         AND s2.artist_gender <> '未知'
-                       GROUP BY s2.artist_gender
-                       ORDER BY COUNT(*) DESC, s2.artist_gender ASC
-                       LIMIT 1
-                   ), '未知') = :gender)
-               AND (:reviewed IS NULL OR (
-                       BOOL_AND('artistGender' = ANY(COALESCE(metadata_locks, '{}')))
-                       AND BOOL_AND(artist_gender IS NOT NULL AND TRIM(artist_gender) <> '' AND artist_gender <> '未知')
-                   ) = :reviewed)
-            ORDER BY song_count DESC, name ASC
+            WITH normalized AS (
+                SELECT COALESCE(NULLIF(TRIM(s.artist), ''), '未知歌手') AS artist_name,
+                       s.artist_init AS artist_init,
+                       s.artist_gender AS artist_gender,
+                       ('artistGender' = ANY(COALESCE(s.metadata_locks, ARRAY[]::text[]))) AS gender_locked
+                FROM songs s
+                WHERE s.status = 'ok'
+            ),
+            grouped AS (
+                SELECT n.artist_name AS name,
+                       COALESCE(NULLIF(UPPER(LEFT(NULLIF(TRIM(MAX(n.artist_init)), ''), 1)), ''), '#') AS initial,
+                       COUNT(*) AS song_count,
+                       COALESCE(MODE() WITHIN GROUP (ORDER BY n.artist_gender)
+                                FILTER (WHERE n.artist_gender IS NOT NULL
+                                          AND TRIM(n.artist_gender) <> ''
+                                          AND n.artist_gender <> '未知'), '未知') AS gender,
+                       (BOOL_AND(n.gender_locked)
+                        AND BOOL_AND(n.artist_gender IS NOT NULL
+                                     AND TRIM(n.artist_gender) <> ''
+                                     AND n.artist_gender <> '未知')) AS reviewed
+                FROM normalized n
+                GROUP BY n.artist_name
+            )
+            SELECT g.name, g.initial, g.song_count, g.gender, g.reviewed
+            FROM grouped g
+            WHERE (:keyword = '' OR LOWER(g.name) LIKE LOWER(CONCAT('%', :keyword, '%')))
+              AND (:gender = '' OR g.gender = :gender)
+              AND (:reviewed = '' OR g.reviewed = (:reviewed = 'true'))
+            ORDER BY g.song_count DESC, g.name ASC
             """,
             countQuery = """
-            SELECT COUNT(*) FROM (
-                SELECT COALESCE(NULLIF(TRIM(artist), ''), '未知歌手') AS name
+            WITH normalized AS (
+                SELECT COALESCE(NULLIF(TRIM(s.artist), ''), '未知歌手') AS artist_name,
+                       s.artist_gender AS artist_gender,
+                       ('artistGender' = ANY(COALESCE(s.metadata_locks, ARRAY[]::text[]))) AS gender_locked
                 FROM songs s
-                WHERE status = 'ok'
-                  AND (:keyword = '' OR LOWER(COALESCE(NULLIF(TRIM(artist), ''), '未知歌手')) LIKE LOWER(CONCAT('%', :keyword, '%')))
-                GROUP BY COALESCE(NULLIF(TRIM(artist), ''), '未知歌手')
-                HAVING (:gender = '' OR COALESCE((
-                           SELECT s2.artist_gender
-                           FROM songs s2
-                           WHERE s2.status = 'ok'
-                             AND COALESCE(NULLIF(TRIM(s2.artist), ''), '未知歌手') = COALESCE(NULLIF(TRIM(s.artist), ''), '未知歌手')
-                             AND s2.artist_gender IS NOT NULL
-                             AND TRIM(s2.artist_gender) <> ''
-                             AND s2.artist_gender <> '未知'
-                           GROUP BY s2.artist_gender
-                           ORDER BY COUNT(*) DESC, s2.artist_gender ASC
-                           LIMIT 1
-                       ), '未知') = :gender)
-                   AND (:reviewed IS NULL OR (
-                           BOOL_AND('artistGender' = ANY(COALESCE(metadata_locks, '{}')))
-                           AND BOOL_AND(artist_gender IS NOT NULL AND TRIM(artist_gender) <> '' AND artist_gender <> '未知')
-                       ) = :reviewed)
-            ) grouped
+                WHERE s.status = 'ok'
+            ),
+            grouped AS (
+                SELECT n.artist_name AS name,
+                       COALESCE(MODE() WITHIN GROUP (ORDER BY n.artist_gender)
+                                FILTER (WHERE n.artist_gender IS NOT NULL
+                                          AND TRIM(n.artist_gender) <> ''
+                                          AND n.artist_gender <> '未知'), '未知') AS gender,
+                       (BOOL_AND(n.gender_locked)
+                        AND BOOL_AND(n.artist_gender IS NOT NULL
+                                     AND TRIM(n.artist_gender) <> ''
+                                     AND n.artist_gender <> '未知')) AS reviewed
+                FROM normalized n
+                GROUP BY n.artist_name
+            )
+            SELECT COUNT(*)
+            FROM grouped g
+            WHERE (:keyword = '' OR LOWER(g.name) LIKE LOWER(CONCAT('%', :keyword, '%')))
+              AND (:gender = '' OR g.gender = :gender)
+              AND (:reviewed = '' OR g.reviewed = (:reviewed = 'true'))
             """,
             nativeQuery = true)
     Page<Object[]> pageAdminArtists(@Param("keyword") String keyword,
                                     @Param("gender") String gender,
-                                    @Param("reviewed") Boolean reviewed,
+                                    @Param("reviewed") String reviewed,
                                     Pageable pageable);
 }

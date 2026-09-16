@@ -51,8 +51,10 @@ public class ArtistLibraryService {
         int safePage = Math.max(0, page);
         String query = keyword == null ? "" : keyword.trim();
         String genderFilter = gender == null ? "" : gender.trim();
+        // 复核状态以字符串传入，避免原生查询绑定可空布尔参数时的类型推断问题
+        String reviewedFilter = reviewed == null ? "" : reviewed.toString();
         PageRequest pageable = PageRequest.of(safePage, safeSize);
-        Page<Object[]> aggregated = songs.pageAdminArtists(query, genderFilter, reviewed, pageable);
+        Page<Object[]> aggregated = songs.pageAdminArtists(query, genderFilter, reviewedFilter, pageable);
         if (aggregated != null) {
             // 原生查询已执行：空页表示没有匹配歌手，不能再全表回落
             List<Map<String, Object>> content = aggregated.getContent().stream()

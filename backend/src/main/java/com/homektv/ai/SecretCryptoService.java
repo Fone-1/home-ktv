@@ -47,8 +47,32 @@ public class SecretCryptoService {
             cipher.updateAAD(name.getBytes(StandardCharsets.UTF_8));
             return new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8);
         } catch (Exception e) {
-            throw new IllegalStateException("敏感配置解密失败，请检查 KTV_CONFIG_MASTER_KEY", e);
+            throw new SecretUnreadableException(
+                    "敏感配置解密失败，当前主密钥（" + describeKeySource() + "）与写入时不一致，请重新保存该项配置。", e);
         }
+    }
+
+    /**
+     * 已保存的密文无法用当前主密钥解密。
+     *
+     * <p>典型成因是主密钥来源发生变化：例如先在容器内（{@code /data/secrets/config.key}）保存过密钥，
+     * 之后改为本地运行（回落到 {@code ./data/secrets/config.key}），或设置了不同的
+     * {@code KTV_CONFIG_MASTER_KEY}。此时旧密文永远解不开，只能重新填写并保存。
+     *
+     * <p>这是可预期的运维状态而非程序缺陷，因此调用方应降级处理并向用户给出可操作的提示，
+     * 而不是让整个接口 500。
+     */
+    public static class SecretUnreadableException extends IllegalStateException {
+        public SecretUnreadableException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
+    /** 当前主密钥来源描述，用于错误提示与排查（不泄露密钥内容）。 */
+    public String describeKeySource() {
+        String environment = System.getenv("KTV_CONFIG_MASTER_KEY");
+        if (environment != null && !environment.isBlank()) return "环境变量 KTV_CONFIG_MASTER_KEY";
+        return "密钥文件 " + Path.of(properties.getConfigMasterKeyPath()).toAbsolutePath().normalize();
     }
 
     private byte[] loadMasterKey(AppProperties properties) {

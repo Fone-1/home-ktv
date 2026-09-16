@@ -8,6 +8,8 @@ import com.homektv.domain.Setting;
 import com.homektv.repo.AppSecretRepository;
 import com.homektv.repo.SettingRepository;
 import com.homektv.web.ApiException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,11 +18,16 @@ import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
 public class AiConfigService {
+    private static final Logger log = LoggerFactory.getLogger(AiConfigService.class);
+
     private static final String SECRET_KEY = "ai.api_key";
     private static final String PREFIX = "ai.";
+    /** 解密失败只告警一次，避免每次读取配置都刷日志。 */
+    private final AtomicBoolean unreadableWarned = new AtomicBoolean(false);
     private final AppProperties properties;
     private final SettingRepository settings;
     private final AppSecretRepository secrets;
@@ -43,16 +50,32 @@ public class AiConfigService {
         String lastTestAt = setting("last_test_at", "", String.class);
         return new ConfigResponse(config.enabled(), config.baseUrl(), config.bulkModel(), config.reasoningModel(),
                 config.timeoutSeconds(), config.identityThreshold(), config.classificationThreshold(), config.jsonMode(),
-                config.bulkConcurrency(), config.reasoningConcurrency(), config.apiKey() != null && !config.apiKey().isBlank(),
-                suffix(config.apiKey()), sourceMap(), capabilities, lastTestAt.isBlank() ? null : lastTestAt);
+                config.bulkConcurrency(), config.reasoningConcurrency(),
+                config.apiKey() != null && !config.apiKey().isBlank(),
+                suffix(config.apiKey()), sourceMap(config.apiKeyUnreadable()), capabilities,
+                lastTestAt.isBlank() ? null : lastTestAt, config.apiKeyUnreadable());
     }
 
     @Transactional(readOnly = true)
     public ResolvedConfig resolve() {
         AppProperties.Ai env = properties.getAi();
-        String key = secrets.findById(SECRET_KEY)
-                .map(secret -> crypto.decrypt(SECRET_KEY, secret.getCiphertext(), secret.getNonce()))
-                .orElse(env.getApiKey());
+        boolean unreadable = false;
+        String key;
+        Optional<AppSecret> stored = secrets.findById(SECRET_KEY);
+        if (stored.isPresent()) {
+            try {
+                key = crypto.decrypt(SECRET_KEY, stored.get().getCiphertext(), stored.get().getNonce());
+            } catch (SecretCryptoService.SecretUnreadableException failure) {
+                // 主密钥变化导致旧密文不可读：降级为「未配置」，并让配置接口明确告知需要重新保存
+                if (unreadableWarned.compareAndSet(false, true)) {
+                    log.warn("已保存的 AI API Key 无法解密，AI 功能将视为未配置：{}", failure.getMessage());
+                }
+                key = env.getApiKey();
+                unreadable = true;
+            }
+        } else {
+            key = env.getApiKey();
+        }
         String bulkFallback = env.getBulkModel();
         return new ResolvedConfig(
                 setting("enabled", env.isEnabled(), Boolean.class),
@@ -65,7 +88,8 @@ public class AiConfigService {
                 jsonMode(setting("json_mode", env.getJsonMode(), String.class)),
                 setting("bulk_concurrency", env.getBulkConcurrency(), Integer.class),
                 setting("reasoning_concurrency", env.getReasoningConcurrency(), Integer.class),
-                key == null ? "" : key);
+                key == null ? "" : key,
+                unreadable);
     }
 
     @Transactional
@@ -102,6 +126,10 @@ public class AiConfigService {
 
     public void requireConfigured() {
         ResolvedConfig config = resolve();
+        if (config.apiKeyUnreadable()) {
+            throw new ApiException("AI_KEY_UNREADABLE",
+                    "已保存的 AI API Key 无法解密（配置主密钥已变化），请在系统设置中重新填写并保存 API Key");
+        }
         if (!config.enabled()) throw new ApiException("AI_DISABLED", "AI 分析未启用，请先配置 AI 模型");
         if (config.baseUrl().isBlank()) throw new ApiException("AI_BASE_URL_MISSING", "AI API Base URL 未配置，请先配置 AI 模型");
         if (config.apiKey().isBlank()) throw new ApiException("AI_KEY_MISSING", "AI API Key 未配置，请先配置 AI 模型");
@@ -111,8 +139,8 @@ public class AiConfigService {
     /** Returns whether an AI request can be made without throwing a user-facing configuration error. */
     public boolean isConfigured() {
         ResolvedConfig config = resolve();
-        return config.enabled() && !config.baseUrl().isBlank() && !config.apiKey().isBlank()
-                && !config.bulkModel().isBlank();
+        return !config.apiKeyUnreadable() && config.enabled() && !config.baseUrl().isBlank()
+                && !config.apiKey().isBlank() && !config.bulkModel().isBlank();
     }
 
     private void validate(ConfigUpdate value) {
@@ -154,14 +182,19 @@ public class AiConfigService {
         }
     }
 
-    private Map<String, String> sourceMap() {
+    private Map<String, String> sourceMap(boolean apiKeyUnreadable) {
         Map<String, String> result = new LinkedHashMap<>();
         for (String field : new String[]{"enabled", "base_url", "bulk_model", "reasoning_model", "timeout_seconds",
                 "identity_threshold", "classification_threshold", "json_mode", "bulk_concurrency", "reasoning_concurrency"}) {
             result.put(field, settings.existsById(PREFIX + field) ? "DATABASE" : hasEnvironment(field) ? "ENVIRONMENT" : "DEFAULT");
         }
-        result.put("api_key", secrets.existsById(SECRET_KEY) ? "DATABASE" :
-                (System.getenv("KTV_AI_API_KEY") != null && !System.getenv("KTV_AI_API_KEY").isBlank()) ? "ENVIRONMENT" : "NONE");
+        if (apiKeyUnreadable) {
+            // 数据库里有密钥但解不开：明确标注，便于后台提示「重新保存」
+            result.put("api_key", "UNREADABLE");
+        } else {
+            result.put("api_key", secrets.existsById(SECRET_KEY) ? "DATABASE" :
+                    (System.getenv("KTV_AI_API_KEY") != null && !System.getenv("KTV_AI_API_KEY").isBlank()) ? "ENVIRONMENT" : "NONE");
+        }
         return result;
     }
 
@@ -219,7 +252,17 @@ public class AiConfigService {
     public enum JsonMode { AUTO, FORCE, PROMPT_ONLY }
     public record ResolvedConfig(boolean enabled, String baseUrl, String bulkModel, String reasoningModel,
                                  int timeoutSeconds, double identityThreshold, double classificationThreshold,
-                                 JsonMode jsonMode, int bulkConcurrency, int reasoningConcurrency, String apiKey) {
+                                 JsonMode jsonMode, int bulkConcurrency, int reasoningConcurrency, String apiKey,
+                                 boolean apiKeyUnreadable) {
+
+        /** 兼容既有调用：未涉及密钥可读性时默认视为可读。 */
+        public ResolvedConfig(boolean enabled, String baseUrl, String bulkModel, String reasoningModel,
+                              int timeoutSeconds, double identityThreshold, double classificationThreshold,
+                              JsonMode jsonMode, int bulkConcurrency, int reasoningConcurrency, String apiKey) {
+            this(enabled, baseUrl, bulkModel, reasoningModel, timeoutSeconds, identityThreshold,
+                    classificationThreshold, jsonMode, bulkConcurrency, reasoningConcurrency, apiKey, false);
+        }
+
         public String modelFor(String role) {
             return "REASONING".equals(role) && reasoningModel != null && !reasoningModel.isBlank() ? reasoningModel : bulkModel;
         }
@@ -232,5 +275,6 @@ public class AiConfigService {
                                  int timeoutSeconds, double identityThreshold, double classificationThreshold,
                                  JsonMode jsonMode, int bulkConcurrency, int reasoningConcurrency,
                                  boolean apiKeyConfigured, String apiKeySuffix, Map<String, String> sources,
-                                 Map<String, Object> capabilities, String lastTestAt) { }
+                                 Map<String, Object> capabilities, String lastTestAt,
+                                 boolean apiKeyUnreadable) { }
 }
