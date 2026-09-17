@@ -187,4 +187,16 @@ class WsBroadcasterTest {
         assertThat(receivedPayloads.get(2)).contains("2000");
         assertThat(receivedPayloads.get(2)).doesNotContain("1000");
     }
+
+    @Test
+    void springContextCanInstantiateWithAutowiredConstructor() {
+        org.springframework.context.annotation.AnnotationConfigApplicationContext ctx =
+                new org.springframework.context.annotation.AnnotationConfigApplicationContext();
+        ctx.registerBean("objectMapper", ObjectMapper.class, (java.util.function.Supplier<ObjectMapper>) ObjectMapper::new);
+        ctx.register(WsBroadcaster.class);
+        ctx.refresh();
+        WsBroadcaster bean = ctx.getBean(WsBroadcaster.class);
+        assertThat(bean).isNotNull();
+        ctx.close();
+    }
 }

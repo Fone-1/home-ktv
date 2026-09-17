@@ -3,6 +3,7 @@ package com.homektv.ws;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -38,6 +39,7 @@ public class WsBroadcaster {
     private final ObjectMapper mapper;
     private final ExecutorService broadcastExecutor;
 
+    @Autowired
     public WsBroadcaster(ObjectMapper mapper) {
         this(mapper, Executors.newFixedThreadPool(8, r -> {
             Thread t = new Thread(r, "ws-broadcaster-worker");
