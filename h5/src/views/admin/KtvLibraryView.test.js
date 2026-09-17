@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createApp, h, nextTick } from 'vue'
+import { createPinia } from 'pinia'
 import KtvLibraryView from './KtvLibraryView.vue'
 import api from '../../api/client'
 
@@ -51,6 +52,7 @@ describe('KtvLibraryView 刮削状态筛选与展示', () => {
     const app = createApp({
       render: () => h(KtvLibraryView)
     })
+    app.use(createPinia())
     app.component('router-link', {
       props: ['to'],
       template: '<a><slot /></a>'

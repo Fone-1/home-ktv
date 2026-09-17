@@ -15,6 +15,13 @@
       </div>
     </header>
 
+    <!-- WebSocket 异常断线提示条与一键重连 -->
+    <div v-if="!player.connected" class="ws-offline-banner">
+      <AlertTriangle :size="14" class="ws-offline-icon" />
+      <span class="ws-offline-text">实时连接已断开，队列状态可能未更新</span>
+      <button class="ws-reconnect-btn" @click="player.connect()">重新连接</button>
+    </div>
+
     <section class="sec greeting">
       <h1>{{ timeGreeting }}，{{ user.nickname }}</h1>
       <p>想唱什么？曲库已经准备好了。</p>
@@ -50,12 +57,13 @@
         </button>
       </div>
 
-      <div v-if="tabLoading" class="tip">加载推荐歌曲中…</div>
+      <div v-if="tabLoading && !currentSongs.length" class="tip">加载推荐歌曲中…</div>
+      <div v-else-if="tabError && !currentSongs.length" class="tip error">{{ tabError }}</div>
       <div v-else-if="!currentSongs.length" class="tip">曲库暂无相关歌曲，先去后台扫描入库</div>
       <template v-else>
         <SongRow v-for="(s, i) in currentSongs" :key="s.id" :song="s"
                  :rank="activeTab === 'hot' ? i + 1 : 0"
-                 :ordered="orderedIds.has(s.id)" @order="handleOrder" />
+                 :ordered="player.orderedSongIds.has(s.id)" @order="order" />
         <div class="more-bar">
           <router-link :to="{ name: 'browse' }" class="more-link">
             浏览曲库全部分类与歌手 <ChevronRight :size="15" />
@@ -79,21 +87,23 @@
  */
 import { ref, onMounted, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import api, { makeControls } from '../api/client'
+import { makeControls } from '../api/client'
 import { useUserStore } from '../stores/user'
 import { usePlayerStore } from '../stores/player'
+import { useRecommendationsStore } from '../stores/recommendations'
 import { useToast } from '../composables/useToast'
 import TabBar from '../components/TabBar.vue'
 import SongRow from '../components/SongRow.vue'
 import NowPlayingBar from '../components/NowPlayingBar.vue'
 import {
   Search, UserRound, Sparkles, UsersRound, ListMusic, Heart,
-  Languages, LayoutGrid, History, ChevronRight
+  Languages, LayoutGrid, History, ChevronRight, AlertTriangle
 } from 'lucide-vue-next'
 
 const router = useRouter()
 const user = useUserStore()
 const player = usePlayerStore()
+const recStore = useRecommendationsStore()
 const { toast } = useToast()
 const controls = makeControls(user.clientToken)
 
@@ -114,18 +124,13 @@ const songTabs = [
   { key: 'ktv', label: 'KTV精选' }
 ]
 const activeTab = ref('hot')
-const tabLoading = ref(false)
-const songCache = reactive({
-  hot: [],
-  new: [],
-  duet: [],
-  ktv: []
-})
 
-const orderedIds = reactive(new Set())
+const activeTabState = computed(() => recStore.tabs[activeTab.value])
+const tabLoading = computed(() => activeTabState.value?.loading ?? false)
+const tabError = computed(() => activeTabState.value?.error ?? null)
 
-/** 当前展示的歌曲列表 / Currently displayed songs */
-const currentSongs = computed(() => songCache[activeTab.value] || [])
+/** 当前展示的歌曲列表（优先由 Pinia 缓存维护） / Currently displayed songs */
+const currentSongs = computed(() => activeTabState.value?.data || [])
 
 /** 首页分类宫格数据（4x2 对称 8 宫格金刚区） / 8-item symmetric category grid */
 const cats = [
@@ -144,63 +149,24 @@ const cats = [
  * Load default tab songs on mount.
  */
 onMounted(() => {
-  loadTabSongs(activeTab.value)
+  recStore.fetchTab(activeTab.value)
 })
 
 /**
- * 切换快捷选歌 Tab 并加载数据
- * Switch quick tab and load data if not cached
+ * 切换快捷选歌 Tab 并触发 Pinia 缓存优先加载与后台静默刷新
  * @param {string} key
  */
-async function switchTab(key) {
+function switchTab(key) {
   activeTab.value = key
-  if (!songCache[key]?.length) {
-    await loadTabSongs(key)
-  }
+  recStore.fetchTab(key)
 }
 
 /**
- * 加载指定选项卡的歌曲列表
- * Load songs for the specified tab
- * @param {string} key
- */
-async function loadTabSongs(key) {
-  tabLoading.value = true
-  try {
-    if (key === 'hot') {
-      let list = await api.ranking(30).catch(() => [])
-      if (!list.length) list = await api.newSongs().catch(() => [])
-      songCache.hot = list
-    } else if (key === 'new') {
-      songCache.new = await api.newSongs().catch(() => [])
-    } else if (key === 'duet') {
-      songCache.duet = await api.browseSongs({ vocalForm: '对唱', limit: 30 }).catch(() => [])
-    } else if (key === 'ktv') {
-      songCache.ktv = await api.browseSongs({ mediaType: 'KTV_VIDEO', limit: 30 }).catch(() => [])
-    }
-  } finally {
-    tabLoading.value = false
-  }
-}
-
-/**
- * 点歌：将指定歌曲加入播放队列。
- * @param {Object} song - 歌曲对象，需含 id 字段
- *
- * Order a song: add it to the playback queue.
- * @param {Object} song - Song object, must contain an `id` field
- */
-function handleOrder(song) {
-  orderedIds.add(song.id)
-}
-
-/**
- * 点歌：外部兼容点歌方法
+ * 点歌：通过统一控制接口将指定歌曲加入播放队列（队列状态由 WebSocket 快照作为唯一事实来源）
  */
 async function order(song) {
   try {
     await controls.order(song.id)
-    orderedIds.add(song.id)
     toast(`已加入队列 · 待唱第 ${player.queueCount || 1} 首`)
   } catch (e) {
     if (e.code === 'SONG_IN_QUEUE') {
@@ -293,4 +259,18 @@ function onCat(c) {
 }
 .more-link:active { color: var(--gold); border-color: var(--gold); }
 .tip { color: var(--dim2); font-size: 13px; padding: 20px 0; text-align: center; }
+.tip.error { color: var(--coral); }
+.ws-offline-banner {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 8px 16px 0; padding: 6px 12px; border-radius: 8px;
+  background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.3);
+  color: var(--coral); font-size: 11px;
+}
+.ws-offline-icon { flex: none; margin-right: 6px; }
+.ws-offline-text { flex: 1; min-width: 0; }
+.ws-reconnect-btn {
+  background: var(--coral); color: #fff; border: none;
+  padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 600;
+  cursor: pointer; flex: none; margin-left: 8px;
+}
 </style>

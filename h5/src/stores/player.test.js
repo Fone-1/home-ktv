@@ -47,4 +47,12 @@ describe('usePlayerStore', () => {
     p.handleEvent('sync_full', { ...snapshot, playing: null })
     expect(p.nowPlaying).toBeNull()
   })
+
+  it('orderedSongIds 从服务端快照统一计算当前播放与待播歌曲 ID', () => {
+    const p = usePlayerStore()
+    p.handleEvent('sync_full', snapshot)
+    expect(p.orderedSongIds.has(10)).toBe(true)
+    expect(p.orderedSongIds.has(11)).toBe(true)
+    expect(p.orderedSongIds.has(99)).toBe(false)
+  })
 })

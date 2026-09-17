@@ -164,19 +164,21 @@ class SetupActivity : AppCompatActivity() {
         row.findViewById<TextView>(R.id.txtLanAddress).text = server.hostPort
         row.findViewById<Button>(R.id.btnLanConnect).apply {
             id = View.generateViewId()
-            setOnClickListener { connect(SavedServer(server.hostPort, server.name)) }
+            val parsed = AppConfig.parseServer(server.hostPort)
+            val scheme = parsed?.scheme ?: "http"
+            setOnClickListener { connect(SavedServer(server.hostPort, server.name, scheme)) }
         }
         binding.lanContainer.addView(row)
         rebuildFocusChain()
     }
 
     private fun submitManual() {
-        val host = AppConfig.normalizeHost(binding.inputHost.text.toString())
-        if (host == null) {
+        val server = AppConfig.parseServer(binding.inputHost.text.toString())
+        if (server == null) {
             Toast.makeText(this, R.string.setup_empty, Toast.LENGTH_SHORT).show()
             return
         }
-        verifyAndConnect(SavedServer(host, host), binding.btnConnect)
+        verifyAndConnect(server, binding.btnConnect)
     }
 
     private fun connect(server: SavedServer) {
@@ -188,7 +190,7 @@ class SetupActivity : AppCompatActivity() {
         button.isEnabled = false
         binding.txtScanStatus.text = getString(R.string.setup_verifying, server.hostPort)
         lifecycleScope.launch {
-            if (scanner.validate(server.hostPort)) {
+            if (scanner.validate(server.hostPort, server.scheme)) {
                 config.rememberServer(server)
                 startActivity(Intent(this@SetupActivity, MainActivity::class.java))
                 finish()

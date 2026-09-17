@@ -25,7 +25,22 @@ export const usePlayerStore = defineStore('player', {
   }),
   getters: {
     queueCount: (s) => s.queue.length,
-    isPlaying: (s) => s.state === 'playing'
+    isPlaying: (s) => s.state === 'playing',
+    /**
+     * 当前正在播放或待唱的所有歌曲 ID 集合（服务端快照为唯一事实源）。
+     */
+    orderedSongIds: (s) => {
+      const set = new Set()
+      if (s.nowPlaying?.song?.id) {
+        set.add(s.nowPlaying.song.id)
+      }
+      if (Array.isArray(s.queue)) {
+        s.queue.forEach(item => {
+          if (item.song?.id) set.add(item.song.id)
+        })
+      }
+      return set
+    }
   },
   actions: {
     /**

@@ -20,8 +20,17 @@ const BASE = '/api'
  */
 async function request(path, options = {}) {
   const isFormData = options.body instanceof FormData
+  let adminToken = null
+  try {
+    adminToken = localStorage.getItem('ktv_admin_token') || sessionStorage.getItem('ktv_admin_token')
+  } catch {}
+  const headers = {
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+    ...(adminToken ? { 'X-Admin-Token': adminToken } : {}),
+    ...(options.headers || {})
+  }
   const res = await fetch(BASE + path, {
-    headers: { ...(isFormData ? {} : { 'Content-Type': 'application/json' }), ...(options.headers || {}) },
+    headers,
     ...options
   })
   if (!res.ok) {
@@ -43,8 +52,8 @@ export const api = {
 
   // 搜索/曲库（P1.6/P1.7）
   // Search / song library (P1.6/P1.7)
-  searchSongs: (keyword, type = '', page = 0) =>
-    request(`/songs?keyword=${encodeURIComponent(keyword)}&type=${type}&page=${page}`),
+  searchSongs: (keyword, type = '', page = 0, signal = null) =>
+    request(`/songs?keyword=${encodeURIComponent(keyword)}&type=${type}&page=${page}`, { signal }),
   songDetail: (id) => request(`/songs/${id}`),
   lyricText: (id) => request(`/lyric/${id}`),
 
@@ -228,7 +237,13 @@ export const api = {
   retrySongConvertTask: (taskId) =>
     request(`/songs/convert-tasks/${taskId}/retry`, { method: 'POST' }),
   rollbackSongDualTrack: (songId) =>
-    request(`/songs/${songId}/rollback-dual-track`, { method: 'POST' })
+    request(`/songs/${songId}/rollback-dual-track`, { method: 'POST' }),
+
+  // 管理员安全与权限 (Task 4.5)
+  adminAuthStatus: () => request('/admin/auth/status'),
+  adminAuthLogin: (pin) => request('/admin/auth/login', { method: 'POST', body: JSON.stringify({ pin }) }),
+  adminAuthLogout: () => request('/admin/auth/logout', { method: 'POST' }),
+  adminAuthUpdatePin: (body) => request('/admin/auth/pin', { method: 'POST', body: JSON.stringify(body) })
 }
 
 /**

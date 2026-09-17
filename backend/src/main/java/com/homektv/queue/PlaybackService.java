@@ -92,27 +92,75 @@ public class PlaybackService {
         return playerRepo.save(ps);
     }
 
-    /** 播放完成（TV 上报）：当前行标记 done，写历史，推进下一首。 */
+    /**
+     * 播放完成（TV 上报）：当前行标记 done，写历史，推进下一首。
+     * 具备严格幂等性：如果传入了 expectedQueueId，必须匹配当前播放的 queueId；
+     * 若当前曲目已非 PLAYING 状态或已被处理，则忽略，避免重复推进队列或重复累计播放次数。
+     *
+     * @param expectedQueueId 期望完成的队列 ID，可为 null
+     * @return 是否实际推进了队列（true 表示实际完成；false 表示重复上报或已切歌被忽略）
+     */
     @Transactional
-    public PlayerState onFinished() {
+    public boolean onFinished(Long expectedQueueId) {
         PlayerState ps = playerRepo.getSingleton();
+        Long cur = ps.getCurrentQueueId();
+        if (cur == null) {
+            return false;
+        }
+        if (expectedQueueId != null && !cur.equals(expectedQueueId)) {
+            return false;
+        }
+        QueueItem current = queueRepo.findById(cur).orElse(null);
+        if (current == null || !QueueService.PLAYING.equals(current.getStatus())) {
+            return false;
+        }
         markCurrent(ps, QueueService.DONE, true);
         advanceToNext(ps);
-        return playerRepo.save(ps);
+        playerRepo.save(ps);
+        return true;
     }
 
     @Transactional
-    public PlayerState onPlayError(Long fileId) {
+    public PlayerState onFinished() {
+        onFinished(null);
+        return playerRepo.getSingleton();
+    }
+
+    @Transactional
+    public boolean onPlayError(Long fileId, Long expectedQueueId) {
+        PlayerState ps = playerRepo.getSingleton();
+        Long cur = ps.getCurrentQueueId();
+        if (cur == null) {
+            return false;
+        }
+        if (expectedQueueId != null && !cur.equals(expectedQueueId)) {
+            return false;
+        }
+        QueueItem current = queueRepo.findById(cur).orElse(null);
+        if (current == null || !QueueService.PLAYING.equals(current.getStatus())) {
+            return false;
+        }
         if (fileId != null) {
             fileRepo.findById(fileId).ifPresent(file -> {
                 file.setValid(false);
                 fileRepo.save(file);
             });
         }
-        PlayerState ps = playerRepo.getSingleton();
         markCurrent(ps, QueueService.SKIPPED, false);
         advanceToNext(ps);
-        return playerRepo.save(ps);
+        playerRepo.save(ps);
+        return true;
+    }
+
+    @Transactional
+    public PlayerState onPlayError(Long fileId) {
+        onPlayError(fileId, null);
+        return playerRepo.getSingleton();
+    }
+
+    /** 获取当前正在播放的队列项 ID（若空闲或无歌曲则返回 null）。 */
+    public Long getCurrentQueueId() {
+        return playerRepo.getSingleton().getCurrentQueueId();
     }
 
     @Transactional

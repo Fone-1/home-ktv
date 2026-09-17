@@ -59,7 +59,8 @@ class LanDiscovery(context: Context) {
         onStage?.invoke(Stage.UDP)
         discoverUdp(::collect)
         onStage?.invoke(Stage.SUBNET)
-        scanner.scanAll(onProgress) { hostPort ->
+        val historyHosts = AppConfig(appContext).savedServers.map { it.hostPort }
+        scanner.scanAll(historyHosts, onProgress) { hostPort ->
             collect(DiscoveredServer(hostPort, hostPort))
         }
         return synchronized(found) { found.values.toList() }

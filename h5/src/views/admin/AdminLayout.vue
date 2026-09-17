@@ -17,9 +17,55 @@
         <router-link class="mi" :class="{ on: active === 'ai' }" :to="{ name: 'admin-ai' }"><span>✦</span>主题歌单</router-link>
         <router-link class="mi" :class="{ on: active === 'settings' }" :to="{ name: 'admin-settings' }"><span>⚙</span>系统设置</router-link>
       </nav>
+      <!-- 底部管理员身份状态与解锁入口 -->
+      <div class="auth-box">
+        <template v-if="adminAuth.pinEnabled">
+          <div v-if="adminAuth.unlocked" class="auth-status unlocked">
+            <span class="auth-dot green"></span><span class="auth-text">已解锁</span>
+            <button class="auth-action-btn" title="锁定管理后台" @click="adminAuth.lock()">锁定</button>
+          </div>
+          <div v-else class="auth-status locked">
+            <span class="auth-dot red"></span><span class="auth-text">只读锁定</span>
+            <button class="auth-action-btn unlock" @click="openUnlockDialog">解锁</button>
+          </div>
+        </template>
+        <template v-else>
+          <div class="auth-status open">
+            <span class="auth-dot gray"></span><span class="auth-text">免登模式</span>
+          </div>
+        </template>
+      </div>
     </aside>
     <!-- 主内容区 / Main content area -->
     <main class="main"><slot /></main>
+
+    <!-- 管理员 PIN 码解锁弹窗 -->
+    <div v-if="adminAuth.showUnlockModal" class="notice-mask" @click.self="adminAuth.showUnlockModal = false">
+      <div class="unlock-dialog">
+        <header class="unlock-header">
+          <strong>管理员权限解锁</strong>
+          <button class="notice-close" @click="adminAuth.showUnlockModal = false">×</button>
+        </header>
+        <form class="unlock-body" @submit.prevent="submitUnlock">
+          <p class="unlock-tip">敏感操作或当前配置受 PIN 码保护，请输入管理员 PIN 码解锁（有效 2 小时）：</p>
+          <input
+            v-model="pinInput"
+            type="password"
+            maxlength="20"
+            class="pin-input"
+            placeholder="输入管理员 PIN 码"
+            autofocus
+          />
+          <div v-if="unlockError" class="unlock-error">{{ unlockError }}</div>
+          <div class="unlock-actions">
+            <button type="button" class="notice-secondary" @click="adminAuth.showUnlockModal = false">取消</button>
+            <button type="submit" class="notice-primary" :disabled="submitting || !pinInput.trim()">
+              {{ submitting ? '验证中…' : '立即解锁' }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
 
     <div v-if="releaseNoticeOpen" class="notice-mask" @click.self="dismissReleaseNotice">
       <section class="release-notice" role="dialog" aria-modal="true" aria-labelledby="release-notice-title">
@@ -59,6 +105,8 @@
  */
 import { onMounted, ref } from 'vue'
 import { api } from '../../api/client'
+import { getActivePinia } from 'pinia'
+import { useAdminAuthStore } from '../../stores/adminAuth'
 
 /**
  * active 当前激活的菜单项标识（dashboard | source | ktv | settings）
@@ -73,7 +121,41 @@ const DISMISSED_KEY = 'home-ktv.admin.releaseNoticeDismissed'
 const releaseInfo = ref(null)
 const releaseNoticeOpen = ref(false)
 
+const fallbackAuth = {
+  token: null, pinEnabled: false, pinSet: false, readRequireAuth: false, unlocked: true, showUnlockModal: false,
+  fetchStatus: async () => {}, unlock: async () => false, lock: async () => {}, requireUnlock: () => {}
+}
+const adminAuth = getActivePinia() ? useAdminAuthStore() : fallbackAuth
+const pinInput = ref('')
+const submitting = ref(false)
+const unlockError = ref('')
+
+function openUnlockDialog() {
+  pinInput.value = ''
+  unlockError.value = ''
+  adminAuth.showUnlockModal = true
+}
+
+async function submitUnlock() {
+  if (!pinInput.value.trim()) return
+  submitting.value = true
+  unlockError.value = ''
+  try {
+    const ok = await adminAuth.unlock(pinInput.value.trim())
+    if (ok) {
+      pinInput.value = ''
+    } else {
+      unlockError.value = 'PIN 码不正确'
+    }
+  } catch (err) {
+    unlockError.value = err.message || '解锁失败，请重试'
+  } finally {
+    submitting.value = false
+  }
+}
+
 onMounted(async () => {
+  adminAuth.fetchStatus()
   try {
     const info = await api.releaseInfo()
     const noticeId = info?.announcement?.id
@@ -136,6 +218,32 @@ nav { padding:16px 12px; }.nav-label { padding:0 10px 8px; font-size:11px; color
 .notice-secondary,.notice-primary { min-height:34px; padding:0 13px; border-radius:6px; font-size:11px; font-weight:600; }
 .notice-secondary { border:1px solid #cbd5e1; background:#fff; color:#475569; }
 .notice-primary { border:1px solid var(--admin-blue); background:var(--admin-blue); color:#fff; }
+
+.auth-box { padding: 14px 12px; border-top: 1px solid var(--admin-border); margin-top: auto; }
+.auth-status { display: flex; align-items: center; justify-content: space-between; font-size: 11px; padding: 6px 10px; border-radius: 6px; background: #f8fafc; border: 1px solid var(--admin-border); }
+.auth-dot { width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; flex: none; }
+.auth-dot.green { background: #10b981; }
+.auth-dot.red { background: #ef4444; }
+.auth-dot.gray { background: #94a3b8; }
+.auth-text { flex: 1; min-width: 0; color: #475569; font-weight: 500; }
+.auth-action-btn { background: none; border: 1px solid #cbd5e1; border-radius: 4px; padding: 2px 7px; font-size: 10px; color: #64748b; cursor: pointer; }
+.auth-action-btn:hover { background: #e2e8f0; color: #1e293b; }
+.auth-action-btn.unlock { border-color: #3b82f6; color: #2563eb; background: #eff6ff; }
+.auth-action-btn.unlock:hover { background: #dbeafe; }
+
+.unlock-dialog { width: min(400px, calc(100vw - 32px)); border: 1px solid #dbe3ee; border-radius: 8px; background: #fff; box-shadow: 0 20px 60px rgba(15,23,42,.24); overflow: hidden; }
+.unlock-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--admin-border); }
+.unlock-header strong { font-size: 15px; color: #172033; }
+.unlock-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
+.unlock-tip { font-size: 12px; color: #64748b; margin: 0; line-height: 1.5; }
+.pin-input {
+  width: 100%; height: 40px; padding: 0 12px; border: 1px solid #cbd5e1; border-radius: 6px;
+  font-size: 14px; outline: none; transition: border-color .2s;
+}
+.pin-input:focus { border-color: var(--admin-blue); }
+.unlock-error { color: #ef4444; font-size: 12px; }
+.unlock-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+
 @media (max-width:760px) {
   .admin-shell { display:block; }
   .side { position:sticky; top:0; z-index:20; width:100%; border-right:0; border-bottom:1px solid var(--admin-border); }

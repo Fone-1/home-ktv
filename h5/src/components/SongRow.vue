@@ -191,7 +191,7 @@ async function doOrder(priority = false, force = false) {
       : await controls.order(props.song.id, force)
 
     if (priority) {
-      if (res?.playbackStarted) {
+      if (res?.playbackStarted || res?.playback_started) {
         toast(`已开启播放《${props.song.title}》！`)
       } else {
         const pos = res?.position ?? 1
@@ -202,14 +202,17 @@ async function doOrder(priority = false, force = false) {
       toast(`已加入队列 · 待唱第 ${pos} 首`, {
         actionText: '设为下一首',
         onAction: async () => {
-          const targetQueueId = res?.queueId || (player.queue || []).find(q => q.song?.id === props.song.id)?.queueId
+          const targetQueueId = res?.queue_id || res?.queueId || (player.queue || []).find(q => q.song?.id === props.song.id)?.queueId
           if (targetQueueId) {
             try {
-              await controls.top(targetQueueId)
-              toast(`已将《${props.song.title}》插播至下一首！`)
+              const topRes = await controls.top(targetQueueId)
+              const finalPos = topRes?.position ?? 1
+              toast(finalPos === 1 ? `已将《${props.song.title}》插播至下一首！` : `已将《${props.song.title}》插播至待唱第 ${finalPos} 首！`)
             } catch (err) {
-              toast(err.message || '置顶失败')
+              toast(err.message || '置顶失败，请重试')
             }
+          } else {
+            toast('未找到对应队列项，请在待唱列表中调整')
           }
         }
       })

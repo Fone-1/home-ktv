@@ -22,6 +22,9 @@ public class SettingService {
    public static final String DELETE_SOURCE_AFTER_TRANSCODE = "delete_source_after_transcode";
     public static final String MV_AUTO_ENQUEUE = "mv_auto_enqueue";
     public static final String MV_AUTO_CONVERT_DUAL_TRACK = "mv_auto_convert_dual_track";
+    public static final String ADMIN_PIN_ENABLED = "admin_pin_enabled";
+    public static final String ADMIN_PIN_HASH = "admin_pin_hash";
+    public static final String ADMIN_READ_REQUIRE_AUTH = "admin_read_require_auth";
 
    public static final String DUAL_TRACK_ENGINE = "dual_track_engine";
     public static final String DUAL_TRACK_REMOTE_URL = "dual_track_remote_url";
@@ -59,7 +62,10 @@ public class SettingService {
            Map.entry("display_address", ""), Map.entry("standby_logo_path", ""),
             Map.entry(DELETE_SOURCE_AFTER_TRANSCODE, false), Map.entry("room_host_user_id", 0L),
             Map.entry(MV_AUTO_ENQUEUE, true),
-            Map.entry(MV_AUTO_CONVERT_DUAL_TRACK, false));
+            Map.entry(MV_AUTO_CONVERT_DUAL_TRACK, false),
+            Map.entry(ADMIN_PIN_ENABLED, false),
+            Map.entry(ADMIN_PIN_HASH, ""),
+            Map.entry(ADMIN_READ_REQUIRE_AUTH, false));
    private static final Set<String> TRANSCODE_KEYS = TRANSCODE_DEFAULTS.keySet();
     private static final Set<String> ALLOWED_KEYS = new HashSet<>();
     static {
@@ -110,6 +116,22 @@ public class SettingService {
     /** MV 在线下载单音轨视频是否自动触发转双轨伴奏分离 */
     public boolean isMvAutoConvertDualTrack() {
         return Boolean.TRUE.equals(getAll().getOrDefault(MV_AUTO_CONVERT_DUAL_TRACK, false));
+    }
+
+    /** 是否启用了管理员 PIN 保护（默认 false 保持家庭局域网零摩擦体验） */
+    public boolean isAdminPinEnabled() {
+        return Boolean.TRUE.equals(getAll().get(ADMIN_PIN_ENABLED));
+    }
+
+    /** 获取管理员 PIN 哈希（带盐存储） */
+    public String getAdminPinHash() {
+        return repo.findById(ADMIN_PIN_HASH).map(Setting::getValue).map(this::parse)
+                .map(Object::toString).orElse("");
+    }
+
+    /** 读取类操作是否强制需要管理员登录 */
+    public boolean isAdminReadRequireAuth() {
+        return Boolean.TRUE.equals(getAll().get(ADMIN_READ_REQUIRE_AUTH));
     }
 
    /** 批量写入设置 */

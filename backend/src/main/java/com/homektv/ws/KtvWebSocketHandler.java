@@ -12,6 +12,9 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 /**
  * KTV WebSocket 处理器（P1.13/P1.15/P1.16，详设§4.1/§4.2）。
  * - 连接建立即推送 sync_full 全量快照
@@ -33,6 +36,13 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
     private final PlaybackService playbackService;
     private final TvOfflineWatcher tvOfflineWatcher;
     private final ObjectMapper mapper;
+    private final Map<String, ProgressTracker> progressTrackers = new ConcurrentHashMap<>();
+
+    static class ProgressTracker {
+        long lastReportTimeMs;
+        long lastPositionMs;
+        Long lastQueueId;
+    }
 
     public KtvWebSocketHandler(WsBroadcaster broadcaster, SnapshotService snapshotService,
                                PlaybackService playbackService, TvOfflineWatcher tvOfflineWatcher,
@@ -80,25 +90,68 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
         switch (type) {
             case "ping" -> broadcaster.sendTo(session, WsEvent.of("pong", null));
             case "progress" -> {
-                // TV 上行播放进度 → 转发给所有端（详设§4.2 progress）
+                if (!isTv(session)) {
+                    log.warn("拒绝非 TV 会话 [{}] 的 progress 上报", session.getId());
+                    return;
+                }
                 long positionMs = node.path("payload").path("position_ms").asLong(0);
+                if (positionMs < 0) return;
+
+                Long reportedQueueId = node.path("payload").path("queue_id").isNumber()
+                        ? node.path("payload").path("queue_id").asLong() : null;
+                Long curQueueId = playbackService.getCurrentQueueId();
+                if (curQueueId == null) {
+                    return;
+                }
+                if (reportedQueueId != null && !curQueueId.equals(reportedQueueId)) {
+                    return;
+                }
+
+                long now = System.currentTimeMillis();
+                ProgressTracker tracker = progressTrackers.computeIfAbsent(session.getId(), k -> new ProgressTracker());
+                // 频率限制：同一客户端进度上报间隔不低于 400ms
+                if (now - tracker.lastReportTimeMs < 400) {
+                    return;
+                }
+                // 单调性检查：同首曲目下，如果倒退超过 2000ms 且非曲目重新开始（>1000ms），判定为抖动丢弃
+                boolean sameTrack = curQueueId.equals(tracker.lastQueueId);
+                if (sameTrack && tracker.lastPositionMs > 0 && positionMs < tracker.lastPositionMs - 2000 && positionMs > 1000) {
+                    return;
+                }
+                tracker.lastReportTimeMs = now;
+                tracker.lastPositionMs = positionMs;
+                tracker.lastQueueId = curQueueId;
+
                 broadcaster.broadcast(WsEvent.of(WsEvent.PROGRESS,
-                        java.util.Map.of("position_ms", positionMs)));
+                        java.util.Map.of("position_ms", positionMs, "queue_id", curQueueId)));
             }
             case "finished" -> {
-                // TV 上报当前曲目播放完成 → 推进队列并广播
-                playbackService.onFinished();
-                broadcaster.broadcast(WsEvent.of(WsEvent.NOW_PLAYING, snapshotService.snapshot()));
+                if (!isTv(session)) {
+                    log.warn("拒绝非 TV 会话 [{}] 的 finished 上报", session.getId());
+                    return;
+                }
+                Long queueId = node.path("payload").path("queue_id").isNumber()
+                        ? node.path("payload").path("queue_id").asLong() : null;
+                // TV 上报当前曲目播放完成 → 幂等推进队列并广播
+                if (playbackService.onFinished(queueId)) {
+                    broadcaster.broadcast(WsEvent.of(WsEvent.NOW_PLAYING, snapshotService.snapshot()));
+                }
             }
             case "play_error" -> {
-                // TV 无法读取当前媒体时按异常切歌，避免队列卡死；将原因同步给手机端。
+                if (!isTv(session)) {
+                    log.warn("拒绝非 TV 会话 [{}] 的 play_error 上报", session.getId());
+                    return;
+                }
                 String reason = node.path("payload").path("message").asText("媒体读取失败");
                 Long fileId = node.path("payload").path("file_id").isNumber()
                         ? node.path("payload").path("file_id").asLong() : null;
-                playbackService.onPlayError(fileId);
-                broadcaster.broadcast(WsEvent.of(WsEvent.TOAST,
-                        java.util.Map.of("text", "当前歌曲播放失败，已自动切换下一首：" + reason)));
-                broadcaster.broadcast(WsEvent.of(WsEvent.NOW_PLAYING, snapshotService.snapshot()));
+                Long queueId = node.path("payload").path("queue_id").isNumber()
+                        ? node.path("payload").path("queue_id").asLong() : null;
+                if (playbackService.onPlayError(fileId, queueId)) {
+                    broadcaster.broadcast(WsEvent.of(WsEvent.TOAST,
+                            java.util.Map.of("text", "当前歌曲播放失败，已自动切换下一首：" + reason)));
+                    broadcaster.broadcast(WsEvent.of(WsEvent.NOW_PLAYING, snapshotService.snapshot()));
+                }
             }
             default -> log.debug("未知 WS 消息类型: {}", type);
         }
@@ -115,6 +168,7 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
      */
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+        progressTrackers.remove(session.getId());
         notifyOfflineIfTv(broadcaster.unregister(session));
         log.debug("WS 连接关闭: {}，剩余在线 {}", session.getId(), broadcaster.sessionCount());
     }
@@ -131,12 +185,15 @@ public class KtvWebSocketHandler extends TextWebSocketHandler {
     @Override
     public void handleTransportError(WebSocketSession session, Throwable exception) {
         log.debug("WS 传输错误 {}: {}", session.getId(), exception.getMessage());
+        progressTrackers.remove(session.getId());
         notifyOfflineIfTv(broadcaster.unregister(session));
     }
 
     private boolean isTv(WebSocketSession session) {
         Object type = session.getAttributes().get("client_type");
-        return "tv".equals(type == null ? null : type.toString());
+        Object token = session.getAttributes().get("client_token");
+        return "tv".equals(type == null ? null : type.toString())
+                && token != null && !token.toString().isBlank();
     }
 
     private void notifyOfflineIfTv(String clientType) {

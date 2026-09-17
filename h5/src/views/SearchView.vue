@@ -19,18 +19,44 @@
 
     <!-- 搜索结果 / Search results -->
     <div class="sec grow results">
-      <div v-if="loading" class="tip">搜索中…</div>
+      <!-- 正在搜索指示（保留当前结果的同时展示） -->
+      <div v-if="loading && results.length" class="searching-bar">
+        <RefreshCw :size="13" class="spin" /><span>正在搜索最新结果…</span>
+      </div>
+
+      <!-- 初次加载或无旧结果时的搜索状态 -->
+      <div v-if="loading && !results.length" class="tip">搜索中…</div>
+
+      <!-- 搜索请求失败状态 -->
+      <div v-else-if="searchError && !results.length" class="empty">
+        <div class="e-title error-text">{{ searchError }}</div>
+        <div class="empty-actions">
+          <button class="btn primary-action" @click="handleEnter">重试搜索</button>
+        </div>
+      </div>
+
+      <!-- 搜索成功并返回结果 -->
       <template v-else-if="results.length">
         <div class="cnt"><b>搜索结果</b><span>{{ results.length }} 首歌曲</span></div>
         <SongRow v-for="s in results" :key="s.id" :song="s" :keyword="kw"
-                 :extra="fmtDur(s.durationMs)" :ordered="orderedIds.has(s.id)" @order="order" />
+                 :extra="fmtDur(s.durationMs)" :ordered="player.orderedSongIds.has(s.id)" @order="order" />
       </template>
+
+      <!-- 搜索无结果 -->
       <div v-else-if="kw && !loading" class="empty">
-        <div class="e-title">曲库还没有这首歌</div>
-        <div class="empty-actions">
-          <button class="btn primary-action" @click="openOnlineMv">全网搜索并点播 MV</button>
-          <button class="btn ghost" @click="addWish">告诉我们想唱《{{ kw }}》</button>
-        </div>
+        <template v-if="libraryEmpty">
+          <div class="e-title">曲库空空如也，暂无歌曲</div>
+          <div class="empty-actions">
+            <router-link :to="{ name: 'admin' }" class="btn primary-action">前往管理后台扫描入库</router-link>
+          </div>
+        </template>
+        <template v-else>
+          <div class="e-title">曲库还没有这首歌</div>
+          <div class="empty-actions">
+            <button class="btn primary-action" @click="openOnlineMv">全网搜索并点播 MV</button>
+            <button class="btn ghost" @click="addWish">告诉我们想唱《{{ kw }}》</button>
+          </div>
+        </template>
       </div>
       <!-- 未输入关键词：展示搜索历史与热门点歌推荐 / Empty query: Search history & hot recommendations -->
       <div v-else class="discovery">
@@ -120,12 +146,14 @@
 import { ref, onMounted, reactive } from 'vue'
 import api, { makeControls } from '../api/client'
 import { useUserStore } from '../stores/user'
+import { usePlayerStore } from '../stores/player'
 import { useToast } from '../composables/useToast'
 import TabBar from '../components/TabBar.vue'
 import SongRow from '../components/SongRow.vue'
-import { ChevronLeft, Search, X, Trash2, Flame } from 'lucide-vue-next'
+import { ChevronLeft, Search, X, Trash2, Flame, RefreshCw } from 'lucide-vue-next'
 
 const user = useUserStore()
+const player = usePlayerStore()
 const { toast } = useToast()
 const controls = makeControls(user.clientToken)
 
@@ -135,6 +163,8 @@ const kw = ref('')
 const results = ref([])
 /** @type {import('vue').Ref<boolean>} 搜索加载状态 / Search loading flag */
 const loading = ref(false)
+const searchError = ref(null)
+const libraryEmpty = ref(false)
 const activeFilter = ref('')
 const filters = [
   { label: '全部', value: '' },
@@ -142,12 +172,10 @@ const filters = [
   { label: 'MV', value: 'MV' },
   { label: '纯音频', value: 'AUDIO' }
 ]
-/** 已点歌 ID 集合，用于高亮标记 / Ordered song ID set, for highlight marking */
-const orderedIds = reactive(new Set())
 const inp = ref(null)
 /** @type {number|null} 防抖定时器引用 / Debounce timer reference */
 let debounce = null
-let searchSequence = 0
+let abortController = null
 
 /** 本地搜索历史记录 / Local search history */
 const searchHistory = ref([])
@@ -232,7 +260,11 @@ function handleEnter() {
 function onInput() {
   if (debounce) clearTimeout(debounce)
   const q = kw.value.trim()
-  if (!q) { results.value = []; loading.value = false; return }
+  if (!q) {
+    clear()
+    return
+  }
+  // 输入时不立即清空旧结果，保留旧结果展示避免白屏闪烁
   loading.value = true
   debounce = setTimeout(() => {
     saveHistory(q)
@@ -241,21 +273,52 @@ function onInput() {
 }
 
 /**
- * 执行歌曲搜索请求
+ * 执行歌曲搜索请求（支持 AbortController 取消前置旧请求，保留旧结果避免闪烁）
  *
  * Execute song search API request.
  */
 async function doSearch() {
   const q = kw.value.trim()
-  if (!q) return
-  const sequence = ++searchSequence
+  if (!q) {
+    if (abortController) {
+      abortController.abort()
+      abortController = null
+    }
+    results.value = []
+    loading.value = false
+    searchError.value = null
+    return
+  }
+
+  if (abortController) {
+    abortController.abort()
+  }
+  abortController = new AbortController()
+
+  loading.value = true
+  searchError.value = null
+
   try {
-    const songs = await api.searchSongs(q, activeFilter.value)
-    if (sequence === searchSequence) results.value = songs
-  } catch {
-    if (sequence === searchSequence) results.value = []
+    const songs = await api.searchSongs(q, activeFilter.value, 0, abortController.signal)
+    results.value = Array.isArray(songs) ? songs : []
+    // 如果当前关键词搜不到，探针检测是否曲库彻底为空
+    if (results.value.length === 0) {
+      try {
+        const check = await api.searchSongs('', '', 0)
+        libraryEmpty.value = Array.isArray(check) && check.length === 0
+      } catch {
+        libraryEmpty.value = false
+      }
+    } else {
+      libraryEmpty.value = false
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      return // 旧请求被新输入取消，忽略
+    }
+    searchError.value = err.message || '搜索请求失败，请检查网络或重试'
   } finally {
-    if (sequence === searchSequence) loading.value = false
+    loading.value = false
   }
 }
 
@@ -295,7 +358,17 @@ async function downloadAndOrder(item) {
 }
 
 /** 清空搜索关键词和结果 / Clear keyword and results */
-function clear() { searchSequence++; kw.value = ''; results.value = []; loading.value = false; inp.value?.focus() }
+function clear() {
+  if (abortController) {
+    abortController.abort()
+    abortController = null
+  }
+  kw.value = ''
+  results.value = []
+  loading.value = false
+  searchError.value = null
+  inp.value?.focus()
+}
 
 function selectFilter(value) {
   if (activeFilter.value === value) return
@@ -316,8 +389,7 @@ function selectFilter(value) {
 async function order(song) {
   try {
     await controls.order(song.id)
-    orderedIds.add(song.id)
-    toast('已加入队列')
+    toast(`已加入队列 · 待唱第 ${player.queueCount || 1} 首`)
   } catch (e) {
     toast(e.code === 'SONG_IN_QUEUE' ? (e.message || '已在队列中') : (e.message || '点歌失败'))
   }
@@ -366,6 +438,13 @@ function fmtDur(ms) {
 .filters { display:flex;gap:7px;padding-top:10px;overflow-x:auto;scrollbar-width:none; }.filters::-webkit-scrollbar { display:none; }.filter { flex:none;padding:6px 10px;border:1px solid var(--line);border-radius:999px;color:var(--dim);font-size:10px;line-height:1.2; }.filter.on { border-color:var(--coral);color:var(--coral);background:rgba(255,107,97,.08); }
 .results { margin-top:6px;overflow-y:auto; }
 .cnt { display:flex;justify-content:space-between;padding:5px 0 8px;color:var(--dim2);font-size:10px; }.cnt b { color:var(--text);font-size:12px; }
+.searching-bar {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 6px 0; color: var(--gold); font-size: 11px;
+}
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.error-text { color: var(--coral) !important; }
 .tip { color: var(--dim2); font-size: 13px; padding: 30px 0; text-align: center; }
 .discovery { padding: 18px 0; display: flex; flex-direction: column; gap: 20px; }
 .disc-section { display: flex; flex-direction: column; gap: 10px; }

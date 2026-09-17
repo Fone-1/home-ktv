@@ -8,7 +8,7 @@
       <div v-else-if="!songs.length" class="empty"><span>♡</span><strong>还没有收藏歌曲</strong><p>在歌曲右侧点爱心即可收藏</p></div>
       <!-- 歌曲列表（含点歌按钮） / Song list with queuing -->
       <div v-else class="list">
-        <SongRow v-for="song in songs" :key="song.id" :song="song" :ordered="orderedIds.has(song.id)" @order="order" />
+        <SongRow v-for="song in songs" :key="song.id" :song="song" :ordered="player.orderedSongIds.has(song.id)" @order="order" />
       </div>
     </main>
     <TabBar active="home" />
@@ -24,21 +24,22 @@
  * Favorites are tied to the current device identity and differ across identities.
  */
 
-import { onMounted, reactive, ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import api, { makeControls } from '../api/client'
 import SongRow from '../components/SongRow.vue'
 import TabBar from '../components/TabBar.vue'
 import { useFavoritesStore } from '../stores/favorites'
 import { useUserStore } from '../stores/user'
+import { usePlayerStore } from '../stores/player'
 import { useToast } from '../composables/useToast'
 
 const user = useUserStore()
+const player = usePlayerStore()
 const favorites = useFavoritesStore()
 const { toast } = useToast()
 const controls = makeControls(user.clientToken)
 const songs = ref([])
 const loading = ref(true)
-const orderedIds = reactive(new Set())
 
 onMounted(load)
 watch(() => favorites.ids.slice(), ids => {
@@ -78,7 +79,6 @@ async function load() {
 async function order(song) {
   try {
     await controls.order(song.id)
-    orderedIds.add(song.id)
     toast('已加入队列')
   } catch (error) {
     toast(error.code === 'SONG_IN_QUEUE' ? (error.message || '已在队列中') : (error.message || '点歌失败'))

@@ -41,6 +41,36 @@
           </div>
         </section>
 
+        <section v-show="section === 'security'" class="section" id="section-security">
+          <SectionHead title="管理员安全与 PIN" description="设置管理端写操作保护与局域网免登策略"><ShieldCheck :size="19" /></SectionHead>
+          <div class="setting-group">
+            <div class="group-head"><strong>PIN 码保护</strong><span>控制管理后台敏感操作是否需要输入 PIN 码</span></div>
+            <SettingRow id="admin_pin_enabled" label="启用管理员 PIN 保护" hint="开启后，修改设置、删除曲目、触发转码等高风险写操作需输入 PIN 码解锁（有效 2 小时）">
+              <Toggle v-model="securityForm.enabled" />
+            </SettingRow>
+            <SettingRow id="admin_read_require_auth" label="后台读取操作强制鉴权" hint="关闭时允许未解锁状态下查看曲库与统计；开启后全后台任何页面均需输入 PIN 码">
+              <Toggle v-model="securityForm.readRequireAuth" />
+            </SettingRow>
+          </div>
+          <div class="setting-group">
+            <div class="group-head"><strong>PIN 码设置与修改</strong><span>设置或重置 4-16 位管理员 PIN 码</span></div>
+            <SettingRow v-if="adminAuth.pinEnabled" label="原 PIN 码" hint="已开启保护时，修改安全设置需输入原 PIN 码">
+              <input v-model="securityForm.oldPin" type="password" class="input wide" placeholder="输入原 PIN 码" />
+            </SettingRow>
+            <SettingRow label="新 PIN 码" hint="留空表示保持当前 PIN 码不变">
+              <input v-model="securityForm.newPin" type="password" class="input wide" placeholder="输入 4-16 位新 PIN 码" />
+            </SettingRow>
+            <SettingRow label="确认新 PIN 码">
+              <input v-model="securityForm.confirmPin" type="password" class="input wide" placeholder="再次输入新 PIN 码" />
+            </SettingRow>
+            <div class="action-row" style="margin-top: 14px;">
+              <button class="btn primary small" :disabled="savingSecurity" @click="saveSecuritySettings">
+                {{ savingSecurity ? '保存中…' : '保存安全设置' }}
+              </button>
+            </div>
+          </div>
+        </section>
+
         <section v-show="section === 'ai'" class="section ai-section" id="section-ai">
           <SectionHead title="AI 模型" description="支持任意 OpenAI-compatible 服务，未配置时继续使用本地解析"><Bot :size="19" /><template #aside><span class="source-pill" :class="{ok: ai.apiKeyConfigured && ai.enabled}"><i></i>{{ ai.apiKeyUnreadable ? '密钥不可读' : ai.enabled && ai.apiKeyConfigured ? '服务可用' : '未配置' }}</span></template></SectionHead>
           <div v-if="ai.apiKeyUnreadable" class="ai-unreadable">已保存的 API Key 无法解密（配置主密钥已变化），AI 功能已暂停。请在下方重新输入 API Key 并保存。</div>
@@ -199,15 +229,23 @@ import { computed, h, onBeforeUnmount, onMounted, reactive, ref, watch, nextTick
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import {
   AlertCircle, Bot, ChevronRight, Database, RotateCcw, Save, Search,
-  SlidersHorizontal, TestTube2, Tv, Wrench, Music2
+  SlidersHorizontal, TestTube2, Tv, Wrench, Music2, ShieldCheck
 } from 'lucide-vue-next'
 import api from '../../api/client'
 import AdminLayout from './AdminLayout.vue'
+import { getActivePinia } from 'pinia'
+import { useAdminAuthStore } from '../../stores/adminAuth'
 import { alertDialog, confirmDialog } from '../../composables/useDialog'
 
 const route = useRoute(); const router = useRouter()
+const fallbackAuth = {
+  token: null, pinEnabled: false, pinSet: false, readRequireAuth: false, unlocked: true, showUnlockModal: false,
+  fetchStatus: async () => {}, unlock: async () => false, lock: async () => {}, requireUnlock: () => {}
+}
+const adminAuth = getActivePinia() ? useAdminAuthStore() : fallbackAuth
 const categories = [
   { key: 'basic', label: '基础配置', description: '路径与访问', icon: SlidersHorizontal },
+  { key: 'security', label: '管理员安全', description: 'PIN 码与权限', icon: ShieldCheck },
   { key: 'ai', label: 'AI 模型', description: '服务与能力', icon: Bot },
   { key: 'metadata', label: '音乐元数据', description: '在线平台与缓存', icon: Music2 },
   { key: 'transcode', label: '入库与转码', description: '格式与源文件', icon: Database },
@@ -215,6 +253,8 @@ const categories = [
   { key: 'maintenance', label: '数据维护', description: '修复与清理', icon: Wrench }
 ]
 const search = ref(''); const section = ref(route.query.section && categories.some(x => x.key === route.query.section) ? route.query.section : 'basic')
+const securityForm = reactive({ enabled: false, readRequireAuth: false, oldPin: '', newPin: '', confirmPin: '' })
+const savingSecurity = ref(false)
 const form = reactive({ library_watch_enabled:false, qr_address:'', delete_source_after_transcode:false, tv_video_scale_mode:'zoom', standby_carousel:true, standby_source:'mixed', standby_song_ids:[], standby_logo_path:'', anti_burn:true, mini_qr:true, standby_welcome:'今晚开唱', standby_subtitle:'手机点歌，电视欢唱\n一家人的客厅 KTV', standby_interval_sec:8, direct_copy_containers:['mp4','m4v','mkv'], direct_copy_video_codecs:['h264','hevc'], direct_copy_audio_codecs:['aac','mp3'], transcode_audio_only:false, transcode_output_container:'mkv', transcode_video_codec:'h264', transcode_audio_codec:'aac', transcode_hardware_acceleration:false, dual_track_engine:'REMOTE_AI', dual_track_remote_url:'http://127.0.0.1:8900/api/separate', dual_track_remote_token:'', dual_track_concurrency:1, dual_track_backup_original:false, dual_track_audio_bitrate:'192k', mv_auto_enqueue:true, mv_auto_convert_dual_track:false })
 const ai = reactive({ enabled:false, apiKeyConfigured:false, apiKeyUnreadable:false, apiKeySuffix:null, sources:{}, capabilities:{}, lastTestAt:null })
 const aiForm = reactive({ enabled:false, baseUrl:'', apiKey:'', bulkModel:'', reasoningModel:'', timeoutSeconds:60, identityThreshold:.97, classificationThreshold:.92, jsonMode:'AUTO', bulkConcurrency:2, reasoningConcurrency:1 })
@@ -280,7 +320,37 @@ function sourceLabel(value){ return value==='DATABASE'?'管理后台':value==='E
 function formatTime(value){ return value ? new Date(value).toLocaleString('zh-CN',{hour12:false}) : '' }
 function applyPreset(p){ if(p.baseUrl) aiForm.baseUrl=p.baseUrl }
 function applyFormSettings(target, source){ if(!source) return; for(const k of Object.keys(target)){ if(k in source){ target[k] = source[k] } } }
-async function load(){ loading.value=true; const [settings,config,music,hw,w] = await Promise.all([api.adminGetSettings().catch(()=>({})),api.adminAiConfig().catch(()=>({})),api.adminMusicSourceConfig().catch(()=>({})),api.adminTranscodeHardware().catch(e=>({reason:e.message})),api.adminWishes().catch(()=>[])]); applyFormSettings(form, settings); Object.assign(ai,config); Object.assign(aiForm,{enabled:config.enabled||false,baseUrl:config.baseUrl||'',bulkModel:config.bulkModel||'',reasoningModel:config.reasoningModel||'',timeoutSeconds:config.timeoutSeconds||60,identityThreshold:config.identityThreshold??0.97,classificationThreshold:config.classificationThreshold??0.92,jsonMode:config.jsonMode||'AUTO',bulkConcurrency:config.bulkConcurrency||2,reasoningConcurrency:config.reasoningConcurrency||1}); Object.assign(musicForm,{enabled:music.enabled||false,providers:music.providers||[],resultLimit:music.resultLimit||20,timeoutSeconds:music.timeoutSeconds||5,searchCacheHours:music.searchCacheHours||6,concurrencyLimit:music.concurrencyLimit||1,requestIntervalMs:music.requestIntervalMs||1500,autoApplyThreshold:music.autoApplyThreshold??.95});musicStatus.value=music.providerStatus||[]; Object.assign(hardware,hw); wishes.value=w; original.value=snapshot(form); aiOriginal.value=snapshot(aiForm); musicOriginal.value=snapshot(musicForm); dirty.value=false; loading.value=false }
+async function load(){ loading.value=true; const [settings,config,music,hw,w] = await Promise.all([api.adminGetSettings().catch(()=>({})),api.adminAiConfig().catch(()=>({})),api.adminMusicSourceConfig().catch(()=>({})),api.adminTranscodeHardware().catch(e=>({reason:e.message})),api.adminWishes().catch(()=>[])]); applyFormSettings(form, settings); Object.assign(ai,config); Object.assign(aiForm,{enabled:config.enabled||false,baseUrl:config.baseUrl||'',bulkModel:config.bulkModel||'',reasoningModel:config.reasoningModel||'',timeoutSeconds:config.timeoutSeconds||60,identityThreshold:config.identityThreshold??0.97,classificationThreshold:config.classificationThreshold??0.92,jsonMode:config.jsonMode||'AUTO',bulkConcurrency:config.bulkConcurrency||2,reasoningConcurrency:config.reasoningConcurrency||1}); Object.assign(musicForm,{enabled:music.enabled||false,providers:music.providers||[],resultLimit:music.resultLimit||20,timeoutSeconds:music.timeoutSeconds||5,searchCacheHours:music.searchCacheHours||6,concurrencyLimit:music.concurrencyLimit||1,requestIntervalMs:music.requestIntervalMs||1500,autoApplyThreshold:music.autoApplyThreshold??.95});musicStatus.value=music.providerStatus||[]; Object.assign(hardware,hw); wishes.value=w; original.value=snapshot(form); aiOriginal.value=snapshot(aiForm); musicOriginal.value=snapshot(musicForm); await adminAuth.fetchStatus(); securityForm.enabled=adminAuth.pinEnabled; securityForm.readRequireAuth=adminAuth.readRequireAuth; dirty.value=false; loading.value=false }
+async function saveSecuritySettings() {
+  if (securityForm.newPin) {
+    if (securityForm.newPin !== securityForm.confirmPin) {
+      await alertDialog('两次输入的新 PIN 码不一致')
+      return
+    }
+    if (securityForm.newPin.length < 4 || securityForm.newPin.length > 16) {
+      await alertDialog('PIN 码长度须在 4 到 16 位之间')
+      return
+    }
+  }
+  savingSecurity.value = true
+  try {
+    await api.adminAuthUpdatePin({
+      old_pin: securityForm.oldPin,
+      new_pin: securityForm.newPin,
+      enabled: securityForm.enabled,
+      read_require_auth: securityForm.readRequireAuth
+    })
+    securityForm.oldPin = ''
+    securityForm.newPin = ''
+    securityForm.confirmPin = ''
+    await adminAuth.fetchStatus()
+    await alertDialog('管理员安全设置已更新')
+  } catch (err) {
+    await alertDialog(err.message || '更新安全设置失败')
+  } finally {
+    savingSecurity.value = false
+  }
+}
 watch([form,aiForm,musicForm],()=>{ if(!loading.value) dirty.value=snapshot(form)!==original.value||snapshot(aiForm)!==aiOriginal.value||snapshot(musicForm)!==musicOriginal.value },{deep:true})
 async function saveAll(){ try { const formChanged = snapshot(form) !== original.value; const aiChanged = snapshot(aiForm) !== aiOriginal.value || clearKey.value; const musicChanged = snapshot(musicForm) !== musicOriginal.value; if (formChanged) { const payload={}; for(const k of Object.keys(form)){ payload[k]=form[k] } const updated=await api.adminPutSettings(payload); applyFormSettings(form, updated); original.value=snapshot(form); } if (aiChanged) { const config=await api.adminAiPutConfig({...aiForm,apiKey:aiForm.apiKey||null,clearApiKey:clearKey.value}); Object.assign(ai,config); aiForm.apiKey=''; clearKey.value=false; aiOriginal.value=snapshot(aiForm); } if (musicChanged) { const music=await api.adminPutMusicSourceConfig({...musicForm}); Object.assign(musicForm,{enabled:music.enabled,providers:music.providers,resultLimit:music.resultLimit,timeoutSeconds:music.timeoutSeconds,searchCacheHours:music.searchCacheHours,concurrencyLimit:music.concurrencyLimit,requestIntervalMs:music.requestIntervalMs,autoApplyThreshold:music.autoApplyThreshold}); musicStatus.value=music.providerStatus||[]; musicOriginal.value=snapshot(musicForm); } dirty.value=snapshot(form)!==original.value||snapshot(aiForm)!==aiOriginal.value||snapshot(musicForm)!==musicOriginal.value } catch(e){ await alertDialog(e.message||'保存失败') } }
 function resetChanges(){ Object.assign(form,JSON.parse(original.value)); Object.assign(aiForm,JSON.parse(aiOriginal.value)); Object.assign(musicForm,JSON.parse(musicOriginal.value)); dirty.value=false }

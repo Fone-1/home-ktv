@@ -75,21 +75,24 @@ class KtvSocket(
         ws = null
     }
 
-    /** 上行播放进度（P1.28 播放引擎每 1s 调用）。 */
-    fun sendProgress(positionMs: Long) {
-        ws?.send("""{"type":"progress","payload":{"position_ms":$positionMs}}""")
+    /** 上行播放进度（P1.28 播放引擎每 1s 调用，附带当前曲目 queueId 以供服务端校验）。 */
+    fun sendProgress(positionMs: Long, queueId: Long? = null) {
+        val qId = queueId?.let { ",\"queue_id\":$it" } ?: ""
+        ws?.send("""{"type":"progress","payload":{"position_ms":$positionMs$qId}}""")
     }
 
-    /** 上行播放完成（P1.33 自动连播）。 */
-    fun sendFinished() {
-        ws?.send("""{"type":"finished"}""")
+    /** 上行播放完成（P1.33 自动连播，附带当前曲目 queueId 保证幂等推进）。 */
+    fun sendFinished(queueId: Long? = null) {
+        val payload = queueId?.let { """{"queue_id":$it}""" } ?: "{}"
+        ws?.send("""{"type":"finished","payload":$payload}""")
     }
 
     /** 播放文件不可读时上报，服务端会标记当前项异常并推进队列。 */
-    fun sendPlayError(message: String, fileId: Long? = null) {
+    fun sendPlayError(message: String, fileId: Long? = null, queueId: Long? = null) {
         val safe = message.replace("\\", "\\\\").replace("\"", "\\\"")
-        val id = fileId?.let { ",\"file_id\":$it" } ?: ""
-        ws?.send("""{"type":"play_error","payload":{"message":"$safe"$id}}""")
+        val fId = fileId?.let { ",\"file_id\":$it" } ?: ""
+        val qId = queueId?.let { ",\"queue_id\":$it" } ?: ""
+        ws?.send("""{"type":"play_error","payload":{"message":"$safe"$fId$qId}}""")
     }
 
     private fun openSocket() {
