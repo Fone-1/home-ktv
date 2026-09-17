@@ -68,6 +68,10 @@ class LanScanner {
         ips.map { ip -> "$ip:$port" }
     }
 
+    internal fun scanTargets(prefix: String): List<String> = CANDIDATE_PORTS.flatMap { port ->
+        (1..254).map { last -> "$prefix$last:$port" }
+    }
+
     /** 单地址探测：GET http://host:port/api/health，body 含 "home-ktv" 即命中。 */
     suspend fun validate(hostPort: String, scheme: String = "http"): Boolean = withContext(Dispatchers.IO) {
         withTimeoutOrNull(PROBE_TIMEOUT_MS + 300) {

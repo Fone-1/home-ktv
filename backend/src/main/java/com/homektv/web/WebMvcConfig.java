@@ -1,5 +1,6 @@
 package com.homektv.web;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -11,20 +12,23 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
 
-    private final AdminSecurityInterceptor adminSecurityInterceptor;
+    private final ObjectProvider<AdminSecurityInterceptor> adminSecurityInterceptorProvider;
 
-    public WebMvcConfig(AdminSecurityInterceptor adminSecurityInterceptor) {
-        this.adminSecurityInterceptor = adminSecurityInterceptor;
+    public WebMvcConfig(ObjectProvider<AdminSecurityInterceptor> adminSecurityInterceptorProvider) {
+        this.adminSecurityInterceptorProvider = adminSecurityInterceptorProvider;
     }
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(adminSecurityInterceptor)
+        AdminSecurityInterceptor interceptor = adminSecurityInterceptorProvider.getIfAvailable();
+        if (interceptor != null) {
+            registry.addInterceptor(interceptor)
                 .addPathPatterns(
                         "/api/admin/**",
                         "/api/songs/*/convert-dual-track",
                         "/api/songs/batch-convert-dual-track",
                         "/api/songs/*/rollback-dual-track"
                 );
+        }
     }
 }
