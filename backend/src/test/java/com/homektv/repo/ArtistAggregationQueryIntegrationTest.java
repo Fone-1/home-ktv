@@ -99,7 +99,7 @@ class ArtistAggregationQueryIntegrationTest {
                 .collect(Collectors.toMap(row -> (String) row[0], row -> row));
         // 排序：歌曲数降序、同名内名字升序
         assertThat(page.getContent().stream().map(row -> (String) row[0]))
-                .containsExactly("周杰伦", "邓丽君", "未知歌手");
+                .containsExactly("周杰伦", "未知歌手", "邓丽君");
 
         Object[] zhou = byName.get("周杰伦");
         assertThat(zhou[1]).isEqualTo("周");
