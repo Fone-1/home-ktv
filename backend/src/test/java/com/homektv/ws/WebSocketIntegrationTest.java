@@ -3,7 +3,10 @@ package com.homektv.ws;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homektv.domain.Song;
+import com.homektv.repo.PlayerStateRepository;
+import com.homektv.repo.QueueItemRepository;
 import com.homektv.repo.SongRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -47,10 +50,23 @@ class WebSocketIntegrationTest {
 
     @LocalServerPort int port;
     @Autowired SongRepository songRepo;
+    @Autowired QueueItemRepository queueRepo;
+    @Autowired PlayerStateRepository playerRepo;
     @Autowired com.homektv.web.ControlController controlController;
     @Autowired ObjectMapper mapper;
 
     private final BlockingQueue<String> received = new LinkedBlockingQueue<>();
+
+    @BeforeEach
+    void setUp() {
+        var ps = playerRepo.getSingleton();
+        ps.setCurrentQueueId(null);
+        ps.setState("idle");
+        playerRepo.save(ps);
+        queueRepo.deleteAll();
+        songRepo.deleteAll();
+        received.clear();
+    }
 
     private WebSocketSession connect() throws Exception {
         StandardWebSocketClient client = new StandardWebSocketClient();
@@ -84,27 +100,38 @@ class WebSocketIntegrationTest {
 
     @Test
     void orderBroadcastsQueueUpdatedAndNowPlaying() throws Exception {
-        Song s = new Song();
-        s.setTitle("晴天"); s.setArtist("周杰伦");
-        s.setMediaType("KTV_VIDEO"); s.setFingerprint("ws-fp-" + System.nanoTime());
-        Long songId = songRepo.save(s).getId();
+        Song s1 = new Song();
+        s1.setTitle("晴天"); s1.setArtist("周杰伦");
+        s1.setMediaType("KTV_VIDEO"); s1.setFingerprint("ws-fp-1-" + System.nanoTime());
+        Long songId1 = songRepo.save(s1).getId();
 
         WebSocketSession session = connect();
         awaitEvent(WsEvent.SYNC_FULL); // 先消费连接快照
 
-        var req = new com.homektv.web.dto.ControlRequest(
-                "order", java.util.Map.of("song_id", songId), "tok-ws-1");
-        controlController.control(req);
-
-        JsonNode queueEvent = awaitEvent(WsEvent.QUEUE_UPDATED);
-        assertThat(queueEvent.path("payload").path("list").isArray()).isTrue();
-        assertThat(queueEvent.path("payload").path("playing").path("song").path("id").asLong())
-                .isEqualTo(songId);
+        // 1. 空闲状态点歌：立即开播，广播 now_playing
+        var req1 = new com.homektv.web.dto.ControlRequest(
+                "order", java.util.Map.of("song_id", songId1), "tok-ws-1");
+        controlController.control(req1);
 
         JsonNode playingEvent = awaitEvent(WsEvent.NOW_PLAYING);
         assertThat(playingEvent.path("payload").path("state").asText()).isEqualTo("playing");
         assertThat(playingEvent.path("payload").path("playing").path("song").path("id").asLong())
-                .isEqualTo(songId);
+                .isEqualTo(songId1);
+
+        // 2. 播放中再次点歌：进入等待队列，广播 queue_updated
+        Song s2 = new Song();
+        s2.setTitle("七里香"); s2.setArtist("周杰伦");
+        s2.setMediaType("KTV_VIDEO"); s2.setFingerprint("ws-fp-2-" + System.nanoTime());
+        Long songId2 = songRepo.save(s2).getId();
+
+        var req = new com.homektv.web.dto.ControlRequest(
+                "order", java.util.Map.of("song_id", songId2), "tok-ws-1");
+        controlController.control(req);
+
+        JsonNode queueEvent = awaitEvent(WsEvent.QUEUE_UPDATED);
+        assertThat(queueEvent.path("payload").path("list").isArray()).isTrue();
+        assertThat(queueEvent.path("payload").path("list").get(0).path("song").path("id").asLong())
+                .isEqualTo(songId2);
         session.close();
     }
 

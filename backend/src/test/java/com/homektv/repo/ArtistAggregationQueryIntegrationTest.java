@@ -1,6 +1,7 @@
 package com.homektv.repo;
 
 import com.homektv.domain.Song;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -47,13 +48,21 @@ class ArtistAggregationQueryIntegrationTest {
     @Autowired
     private SongRepository songRepository;
 
+    @BeforeEach
+    void setUp() {
+        songRepository.deleteAll();
+    }
+
     private static Song song(String title, String artist, String gender, String[] locks) {
         Song song = new Song();
         song.setTitle(title);
         song.setArtist(artist);
-        song.setArtistInit(artist.substring(0, 1));
+        String trimmed = artist == null ? "" : artist.trim();
+        song.setArtistInit(trimmed.isEmpty() ? "" : trimmed.substring(0, 1));
         song.setArtistGender(gender);
         song.setMetadataLocks(locks);
+        song.setMediaType("KTV_VIDEO");
+        song.setFingerprint("fp-" + title + "-" + System.nanoTime() + "-" + java.util.UUID.randomUUID());
         return song;
     }
 
