@@ -84,10 +84,9 @@ class ArtistAggregationQueryIntegrationTest {
                 song("月亮代表我的心", " 邓丽君 ", "女", new String[]{"artistGender"}),
                 // 空白歌手名归入「未知歌手」，无有效类型 → 众数回退「未知」
                 song("伴奏一", "  ", "未知", new String[0]),
-                song("伴奏二", "", "男", new String[0]),
-                // 非 ok 状态不参与聚合
-                song("待删", "林俊杰", "男", new String[0])
+                song("伴奏二", "", "未知", new String[0])
         ));
+        // 非 ok 状态不参与聚合
         Song pending = song("待删", "林俊杰", "男", new String[0]);
         pending.setStatus("pending");
         songRepository.save(pending);
